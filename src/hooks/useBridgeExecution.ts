@@ -1,0 +1,273 @@
+import { useCallback, useState } from 'react';
+import { formatEther, type Chain } from 'viem';
+import type { DemoToken } from '../composeConfig';
+import { formatChainLabel } from '../lib/format';
+import type { BridgeResult } from '../types/bridge';
+import type { DepositRequirement } from '../types/deposit';
+import {
+  MAX_TRANSACTION_HISTORY,
+  MIN_RECOMMENDED_TOP_UP,
+  buildBridgeCalls,
+  executeComposedBridgeFlow,
+  loadSourceFundingContext,
+  markNonSuccessfulStatusesFailed,
+  resolveBridgeExecutionError,
+  resolveEntryPointDepositRequirements,
+  type BridgeCall,
+  type SmartAccountData,
+  validateBridgeExecutionInput
+} from './bridgeExecution';
+
+// Bridge execution orchestrator: validates inputs, coordinates compose/send, and tracks result lifecycle.
+type UseBridgeExecutionParams = {
+  amountInput: string;
+  selectedToken: DemoToken | undefined;
+  sourceBalance: bigint | undefined;
+  walletAddress: `0x${string}` | undefined;
+  sourceChain: Chain;
+  destinationChain: Chain;
+  sourceSmart: SmartAccountData | undefined;
+  destinationSmart: SmartAccountData | undefined;
+  bridgeAddress: `0x${string}`;
+  entryPointAddress: `0x${string}`;
+  hasPaymaster: boolean;
+  ensureWalletOnChain: (targetChainId: number) => Promise<unknown>;
+  onClearErrors: () => void;
+  onBridgeError: (message: string) => void;
+  onDepositRequired: (requirements: DepositRequirement[], suggestedTopUpInput: string) => void;
+  onRefreshBalances: () => void;
+};
+
+/**
+ * Executes the cross-rollup bridge flow and exposes UI-friendly submission state.
+ */
+export function useBridgeExecution({
+  amountInput,
+  selectedToken,
+  sourceBalance,
+  walletAddress,
+  sourceChain,
+  destinationChain,
+  sourceSmart,
+  destinationSmart,
+  bridgeAddress,
+  entryPointAddress,
+  hasPaymaster,
+  ensureWalletOnChain,
+  onClearErrors,
+  onBridgeError,
+  onDepositRequired,
+  onRefreshBalances
+}: UseBridgeExecutionParams) {
+  const [results, setResults] = useState<BridgeResult[]>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [bridgePhase, setBridgePhase] = useState<string | null>(null);
+
+  const clearBridgePhase = useCallback(() => {
+    setBridgePhase(null);
+  }, []);
+
+  const upsertBridgeResult = useCallback((sessionId: bigint, build: (existing?: BridgeResult) => BridgeResult) => {
+    setResults((previous) => {
+      const existingIndex = previous.findIndex((item) => item.sessionId === sessionId);
+
+      if (existingIndex === -1) {
+        return [build(undefined), ...previous].slice(0, MAX_TRANSACTION_HISTORY);
+      }
+
+      const next = [...previous];
+      next[existingIndex] = build(next[existingIndex]);
+      return next;
+    });
+  }, []);
+
+  const checkEntryPointDepositRequirements = useCallback(
+    async ({
+      sourceSmartAccount,
+      destinationSmartAccount,
+      sourceCalls,
+      destinationCalls
+    }: {
+      sourceSmartAccount: SmartAccountData;
+      destinationSmartAccount: SmartAccountData;
+      sourceCalls: BridgeCall[];
+      destinationCalls: BridgeCall[];
+    }) => {
+      return resolveEntryPointDepositRequirements({
+        sourceSmartAccount,
+        destinationSmartAccount,
+        sourceCalls,
+        destinationCalls,
+        sourceChainLabel: formatChainLabel(sourceChain.name, sourceChain.id),
+        destinationChainLabel: formatChainLabel(destinationChain.name, destinationChain.id),
+        entryPointAddress
+      });
+    },
+    [destinationChain.id, destinationChain.name, entryPointAddress, sourceChain.id, sourceChain.name]
+  );
+
+  const executeBridge = useCallback(
+    async (options?: { skipDepositCheck?: boolean }) => {
+      onClearErrors();
+
+      const validation = validateBridgeExecutionInput({
+        amountInput,
+        selectedToken,
+        sourceBalance,
+        walletAddress,
+        sourceChain,
+        destinationChain,
+        sourceSmart,
+        destinationSmart
+      });
+
+      if (!validation.ok) {
+        onBridgeError(validation.error);
+        return;
+      }
+
+      const {
+        amount,
+        selectedToken: validatedToken,
+        walletAddress: validatedWalletAddress,
+        sourceSmart: sourceSmartAccount,
+        destinationSmart: destinationSmartAccount
+      } = validation.value;
+
+      const sender = sourceSmartAccount.account.address;
+      const receiver = destinationSmartAccount.account.address;
+      const destinationEoaReceiver = validatedWalletAddress;
+
+      const fundingContext = await loadSourceFundingContext({
+        sourceSmart: sourceSmartAccount,
+        selectedToken: validatedToken,
+        sender,
+        walletAddress: validatedWalletAddress,
+        amount
+      });
+
+      if (amount > fundingContext.sourceTotalBalanceOnChain) {
+        onBridgeError(`Amount exceeds total available ${validatedToken.symbol} on source chain (EOA + smart account).`);
+        return;
+      }
+
+      const sessionId = BigInt(Date.now());
+      const { sourceCalls, destinationCalls } = buildBridgeCalls({
+        selectedToken: validatedToken,
+        walletAddress: validatedWalletAddress,
+        sender,
+        receiver,
+        destinationEoaReceiver,
+        bridgeAddress,
+        sourceChainId: sourceChain.id,
+        destinationChainId: destinationChain.id,
+        amount,
+        sessionId,
+        amountToPullFromEoa: fundingContext.amountToPullFromEoa
+      });
+
+      const shouldCheckEntryPointDeposit = !options?.skipDepositCheck && !hasPaymaster;
+      if (shouldCheckEntryPointDeposit) {
+        const depositRequirements = await checkEntryPointDepositRequirements({
+          sourceSmartAccount,
+          destinationSmartAccount,
+          sourceCalls,
+          destinationCalls
+        });
+
+        if (depositRequirements.length > 0) {
+          const suggestedTopUp = depositRequirements.reduce(
+            (max, requirement) => (requirement.recommendedTopUp > max ? requirement.recommendedTopUp : max),
+            MIN_RECOMMENDED_TOP_UP
+          );
+          onDepositRequired(depositRequirements, formatEther(suggestedTopUp));
+          return;
+        }
+      }
+
+      try {
+        setIsSubmitting(true);
+
+        const execution = await executeComposedBridgeFlow({
+          sourceSmartAccount,
+          destinationSmartAccount,
+          sourceChain,
+          sourceCalls,
+          destinationCalls,
+          selectedToken: validatedToken,
+          walletAddress: validatedWalletAddress,
+          sender,
+          amountToPullFromEoa: fundingContext.amountToPullFromEoa,
+          sourceAllowance: fundingContext.sourceAllowance,
+          ensureWalletOnChain,
+          setBridgePhase,
+          onPayloadSubmitted: ({ hashesToTrack, explorerUrls }) => {
+            upsertBridgeResult(sessionId, () => ({
+              hashes: hashesToTrack,
+              explorerUrls,
+              chainLabels: [sourceChain.name, destinationChain.name],
+              sessionId,
+              receiptStatuses: hashesToTrack.map(() => 'pending')
+            }));
+          }
+        });
+
+        upsertBridgeResult(sessionId, (existing) => ({
+          hashes: existing?.hashes ?? execution.hashesToTrack,
+          explorerUrls: existing?.explorerUrls ?? execution.explorerUrls,
+          chainLabels: existing?.chainLabels ?? [sourceChain.name, destinationChain.name],
+          sessionId,
+          receiptStatuses: execution.receiptStatuses
+        }));
+
+        onRefreshBalances();
+      } catch (executionError) {
+        const { normalizedMessage } = resolveBridgeExecutionError(executionError);
+
+        setResults((previous) =>
+          previous.map((item) =>
+            item.sessionId === sessionId
+              ? {
+                  ...item,
+                  receiptStatuses: markNonSuccessfulStatusesFailed(item.receiptStatuses)
+                }
+              : item
+          )
+        );
+
+        onBridgeError(normalizedMessage);
+        console.error('Bridge execution failed', normalizedMessage, executionError);
+      } finally {
+        setBridgePhase(null);
+        setIsSubmitting(false);
+      }
+    },
+    [
+      amountInput,
+      bridgeAddress,
+      checkEntryPointDepositRequirements,
+      destinationChain,
+      destinationSmart,
+      ensureWalletOnChain,
+      hasPaymaster,
+      onBridgeError,
+      onClearErrors,
+      onDepositRequired,
+      onRefreshBalances,
+      selectedToken,
+      sourceBalance,
+      sourceChain,
+      sourceSmart,
+      upsertBridgeResult,
+      walletAddress
+    ]
+  );
+
+  return {
+    executeBridge,
+    isSubmitting,
+    bridgePhase,
+    clearBridgePhase,
+    results
+  };
+}
