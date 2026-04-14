@@ -4,13 +4,16 @@ export type AccountAbstractionContracts = {
   kernelImpl: `0x${string}`;
   kernelFactory: `0x${string}`;
   multichainValidator: `0x${string}`;
-  metaFactory: `0x${string}`;
+  metaFactory?: `0x${string}`;
 };
+
+export type DemoTokenKind = 'erc20' | 'nativeEthViaWeth';
 
 export type DemoToken = {
   symbol: string;
   address: `0x${string}`;
   decimals: number;
+  kind: DemoTokenKind;
 };
 
 export type L1FundingConfig = {

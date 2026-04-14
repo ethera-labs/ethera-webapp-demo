@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { WagmiProvider } from 'wagmi';
-import { ComposeProvider } from '@ssv-labs/compose-sdk/react';
+import { ComposeProvider } from '@ssv-labs/ethera-sdk/react';
 import App from './App';
 import { composeConfig, wagmiConfig } from './composeConfig';
 import './index.css';

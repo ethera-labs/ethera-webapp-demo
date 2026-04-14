@@ -14,6 +14,44 @@ import type {
 // EntryPoint deposit requirement estimation for non-paymaster mode.
 const withGasMargin = (value: bigint, marginPct = 25n) => value + (value * marginPct) / 100n;
 
+const estimateCallGasWithFallback = async ({
+  smart,
+  call
+}: {
+  smart: EstimateEntryPointRequirementParams['smart'];
+  call: EstimateEntryPointRequirementParams['calls'][number];
+}) => {
+  try {
+    return withGasMargin(
+      await smart.publicClient.estimateGas({
+        account: smart.account,
+        to: call.to,
+        data: call.data,
+        value: call.value
+      })
+    );
+  } catch {
+    if (call.value > 0n) {
+      try {
+        // Value-bearing calls can fail estimation when the smart account is not funded yet.
+        // Estimating with value=0 keeps gas prechecks stable for the non-paymaster modal path.
+        return withGasMargin(
+          await smart.publicClient.estimateGas({
+            account: smart.account,
+            to: call.to,
+            data: call.data,
+            value: 0n
+          })
+        );
+      } catch {
+        // Fall through to conservative fallback below.
+      }
+    }
+
+    return FALLBACK_CALL_GAS_LIMIT;
+  }
+};
+
 const estimateEntryPointRequirementForChain = async ({
   smart,
   calls,
@@ -21,17 +59,7 @@ const estimateEntryPointRequirementForChain = async ({
   entryPointAddress
 }: EstimateEntryPointRequirementParams): Promise<EntryPointRequirement> => {
   const callGasEstimates = await Promise.all(
-    calls.map((call) =>
-      smart.publicClient
-        .estimateGas({
-          account: smart.account,
-          to: call.to,
-          data: call.data,
-          value: call.value
-        })
-        .then(withGasMargin)
-        .catch(() => FALLBACK_CALL_GAS_LIMIT)
-    )
+    calls.map((call) => estimateCallGasWithFallback({ smart, call }))
   );
 
   const callGasLimit = callGasEstimates.reduce((acc, gas) => acc + gas, 0n);

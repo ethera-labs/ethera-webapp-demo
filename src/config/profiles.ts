@@ -1,13 +1,10 @@
 import {
-  base,
-  composeRollupsContracts,
-  mainnet,
   rollupA,
   rollupB,
   rollupsAccountAbstractionContracts
-} from '@ssv-labs/compose-sdk';
+} from '@ssv-labs/ethera-sdk';
 import { defineChain, type Chain } from 'viem';
-import { sepolia } from 'viem/chains';
+import { base, mainnet, sepolia } from 'viem/chains';
 import {
   getEnv,
   getOptionalPositiveIntEnv,
@@ -20,6 +17,7 @@ import { resolvePaymasterByChainId } from './paymaster';
 import type { AccountAbstractionContracts, DemoToken, NetworkProfile } from './types';
 
 // Network profile builders for testnet/mainnet compose runtime setup.
+
 const resolveSingleToken = ({
   addressKey,
   decimalsKey,
@@ -41,8 +39,35 @@ const resolveSingleToken = ({
   return {
     symbol: getEnv(symbolKey) ?? defaultSymbol,
     address: toAddress(addressValue, addressKey),
-    decimals: decimalsValue ? parseNonNegativeInt(decimalsValue, decimalsKey) : defaultDecimals
+    decimals: decimalsValue ? parseNonNegativeInt(decimalsValue, decimalsKey) : defaultDecimals,
+    kind: 'erc20'
   };
+};
+
+const resolveTestnetTokens = (singleToken: DemoToken): readonly DemoToken[] => {
+  const testnetWethAddress = toAddress(getRequiredEnv('VITE_TESTNET_WETH_ADDRESS'), 'VITE_TESTNET_WETH_ADDRESS');
+
+  if (singleToken.symbol.toUpperCase() === 'ETH') {
+    throw new Error('VITE_TESTNET_TOKEN_SYMBOL must not be ETH. ETH is reserved for native bridge mode.');
+  }
+
+  const ethBridgeToken: DemoToken = {
+    symbol: 'ETH',
+    address: testnetWethAddress,
+    decimals: 18,
+    kind: 'nativeEthViaWeth'
+  };
+
+  if (singleToken.address.toLowerCase() === ethBridgeToken.address.toLowerCase()) {
+    throw new Error('VITE_TESTNET_TOKEN_ADDRESS must not be the WETH bridge token address reserved for ETH mode.');
+  }
+
+  return [singleToken, ethBridgeToken];
+};
+
+const resolveOptionalAddressEnv = (key: string): `0x${string}` | undefined => {
+  const value = getEnv(key);
+  return value ? toAddress(value, key) : undefined;
 };
 
 const makeTestnetChain = ({
@@ -106,6 +131,9 @@ export const createTestnetProfile = (): NetworkProfile => {
     'VITE_TESTNET_ROLLUP_B_EXPLORER'
   );
 
+  const chainAMetaFactory = resolveOptionalAddressEnv('VITE_TESTNET_ROLLUP_A_META_FACTORY');
+  const chainBMetaFactory = resolveOptionalAddressEnv('VITE_TESTNET_ROLLUP_B_META_FACTORY');
+
   const chainAContracts: AccountAbstractionContracts = {
     kernelImpl: toAddress(
       getEnv('VITE_TESTNET_ROLLUP_A_KERNEL_IMPL') ?? rollupsAccountAbstractionContracts.kernelImpl,
@@ -119,10 +147,7 @@ export const createTestnetProfile = (): NetworkProfile => {
       getEnv('VITE_TESTNET_ROLLUP_A_MULTICHAIN_VALIDATOR') ?? rollupsAccountAbstractionContracts.multichainValidator,
       'VITE_TESTNET_ROLLUP_A_MULTICHAIN_VALIDATOR'
     ),
-    metaFactory: toAddress(
-      getEnv('VITE_TESTNET_ROLLUP_A_META_FACTORY') ?? rollupsAccountAbstractionContracts.metaFactory,
-      'VITE_TESTNET_ROLLUP_A_META_FACTORY'
-    )
+    ...(chainAMetaFactory ? { metaFactory: chainAMetaFactory } : {})
   };
 
   const chainBContracts: AccountAbstractionContracts = {
@@ -138,10 +163,7 @@ export const createTestnetProfile = (): NetworkProfile => {
       getEnv('VITE_TESTNET_ROLLUP_B_MULTICHAIN_VALIDATOR') ?? rollupsAccountAbstractionContracts.multichainValidator,
       'VITE_TESTNET_ROLLUP_B_MULTICHAIN_VALIDATOR'
     ),
-    metaFactory: toAddress(
-      getEnv('VITE_TESTNET_ROLLUP_B_META_FACTORY') ?? rollupsAccountAbstractionContracts.metaFactory,
-      'VITE_TESTNET_ROLLUP_B_META_FACTORY'
-    )
+    ...(chainBMetaFactory ? { metaFactory: chainBMetaFactory } : {})
   };
 
   const chainAResolved = makeTestnetChain({
@@ -229,12 +251,12 @@ export const createTestnetProfile = (): NetworkProfile => {
       [chainBResolved.id]: chainBRpc,
       ...(l1Funding ? { [l1Funding.chain.id]: l1Funding.rpc } : {})
     },
-    bridgeAddress: toAddress(getEnv('VITE_TESTNET_BRIDGE') ?? composeRollupsContracts.bridge, 'VITE_TESTNET_BRIDGE'),
+    bridgeAddress: toAddress(getRequiredEnv('VITE_TESTNET_BRIDGE'), 'VITE_TESTNET_BRIDGE'),
     accountAbstractionContracts: {
       [chainAResolved.id]: chainAContracts,
       [chainBResolved.id]: chainBContracts
     },
-    tokens: [singleToken],
+    tokens: resolveTestnetTokens(singleToken),
     paymasterByChainId,
     l1Funding
   };

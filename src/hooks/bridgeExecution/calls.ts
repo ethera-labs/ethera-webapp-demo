@@ -1,5 +1,5 @@
 import { erc20Abi } from 'viem';
-import { bridgeEncoder, erc20Encoder } from '../../lib/bridge';
+import { bridgeEncoder, erc20Encoder, wethEncoder } from '../../lib/bridge';
 import type { BridgeCall, BuildBridgeCallsParams, SourceFundingContext, SmartAccountData } from './types';
 
 // User-op call construction and source-funding context helpers.
@@ -19,6 +19,23 @@ export const loadSourceFundingContext = async ({
   walletAddress: `0x${string}`;
   amount: bigint;
 }): Promise<SourceFundingContext> => {
+  // ETH mode uses native balances because the source smart account must fund WETH.deposit(value).
+  if (selectedToken.kind === 'nativeEthViaWeth') {
+    const [sourceSmartNativeBalance, sourceEoaNativeBalance] = await Promise.all([
+      sourceSmart.publicClient.getBalance({ address: sender }),
+      sourceSmart.publicClient.getBalance({ address: walletAddress })
+    ]);
+
+    const sourceTotalBalanceOnChain = sourceSmartNativeBalance + sourceEoaNativeBalance;
+    const amountToFundSmartAccountFromEoa = amount > sourceSmartNativeBalance ? amount - sourceSmartNativeBalance : 0n;
+
+    return {
+      kind: 'nativeEthViaWeth',
+      sourceTotalBalanceOnChain,
+      amountToFundSmartAccountFromEoa
+    };
+  }
+
   const [sourceSmartBalanceOnChain, sourceEoaBalanceOnChain] = await Promise.all([
     sourceSmart.publicClient.readContract({
       address: selectedToken.address,
@@ -48,6 +65,7 @@ export const loadSourceFundingContext = async ({
       : 0n;
 
   return {
+    kind: 'erc20',
     sourceTotalBalanceOnChain,
     amountToPullFromEoa,
     sourceAllowance
@@ -70,6 +88,64 @@ export const buildBridgeCalls = ({
   sessionId,
   amountToPullFromEoa
 }: BuildBridgeCallsParams): { sourceCalls: BridgeCall[]; destinationCalls: BridgeCall[] } => {
+  // ETH mode sequence: source deposit->approve->send, destination receive->withdraw->native transfer.
+  if (selectedToken.kind === 'nativeEthViaWeth') {
+    const sourceCalls: BridgeCall[] = [
+      {
+        to: selectedToken.address,
+        value: amount,
+        data: wethEncoder.deposit()
+      },
+      {
+        to: selectedToken.address,
+        value: 0n,
+        data: erc20Encoder.approve({
+          spender: bridgeAddress,
+          amount
+        })
+      },
+      {
+        to: bridgeAddress,
+        value: 0n,
+        data: bridgeEncoder.send({
+          otherChainId: BigInt(destinationChainId),
+          token: selectedToken.address,
+          sender,
+          receiver,
+          amount,
+          sessionId,
+          destBridge: bridgeAddress
+        })
+      }
+    ];
+
+    const destinationCalls: BridgeCall[] = [
+      {
+        to: bridgeAddress,
+        value: 0n,
+        data: bridgeEncoder.receiveTokens({
+          otherChainId: BigInt(sourceChainId),
+          sender,
+          receiver,
+          sessionId,
+          srcBridge: bridgeAddress
+        })
+      },
+      {
+        to: selectedToken.address,
+        value: 0n,
+        data: wethEncoder.withdraw({ wad: amount })
+      },
+      {
+        to: destinationEoaReceiver,
+        value: amount,
+        data: '0x'
+      }
+    ];
+
+    return { sourceCalls, destinationCalls };
+  }
+
   const sourceCalls: BridgeCall[] = [
     ...(amountToPullFromEoa > 0n
       ? [

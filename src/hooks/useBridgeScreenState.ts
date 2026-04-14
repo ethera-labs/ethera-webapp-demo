@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useSmartAccount } from '@ssv-labs/compose-sdk/react';
+import { useSmartAccount } from '@ssv-labs/ethera-sdk/react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { erc20Abi } from 'viem';
 import { chainA, chainB, bridgeAddress, composeConfig, demoTokens, networkProfile, type DemoToken } from '../composeConfig';
@@ -85,8 +85,9 @@ export function useBridgeScreenState({
         throw new Error('Source smart account is not ready yet.');
       }
 
+      const erc20Tokens = demoTokens.filter((token) => token.kind === 'erc20');
       const entries = await Promise.all(
-        demoTokens.map(async (token) => {
+        erc20Tokens.map(async (token) => {
           const [smartBalance, eoaBalance] = await Promise.all([
             smart.publicClient.readContract({
               address: token.address,
@@ -108,8 +109,34 @@ export function useBridgeScreenState({
     }
   });
 
+  const sourceNativeBalancesQuery = useQuery({
+    queryKey: ['source-native-balances', sourceChain.id, sharedSmartAccountAddress, walletAddress],
+    enabled: Boolean(sourceSmart?.publicClient && sharedSmartAccountAddress && walletAddress),
+    queryFn: async () => {
+      // ETH mode uses native source balances (EOA + smart account), not ERC20 balanceOf.
+      const smart = sourceSmart;
+      const smartAddress = sharedSmartAccountAddress;
+      const eoaAddress = walletAddress;
+
+      if (!smart || !smartAddress || !eoaAddress) {
+        throw new Error('Source native balance context is not ready yet.');
+      }
+
+      const [smartBalance, eoaBalance] = await Promise.all([
+        smart.publicClient.getBalance({ address: smartAddress }),
+        smart.publicClient.getBalance({ address: eoaAddress })
+      ]);
+
+      return {
+        smart: smartBalance,
+        eoa: eoaBalance,
+        total: smartBalance + eoaBalance
+      };
+    }
+  });
+
   const destinationBalanceQuery = useQuery({
-    queryKey: ['destination-balance', destinationChain.id, selectedToken?.address, walletAddress],
+    queryKey: ['destination-balance', destinationChain.id, selectedToken?.kind, selectedToken?.address, walletAddress],
     enabled: Boolean(destinationSmart?.publicClient && walletAddress && selectedToken),
     queryFn: async () => {
       const smart = destinationSmart;
@@ -117,6 +144,11 @@ export function useBridgeScreenState({
 
       if (!smart || !eoaAddress || !selectedToken) {
         throw new Error('Destination EOA context is not ready yet.');
+      }
+
+      // ETH mode reads native destination balance; ERC20 mode keeps token balanceOf behavior.
+      if (selectedToken.kind === 'nativeEthViaWeth') {
+        return smart.publicClient.getBalance({ address: eoaAddress });
       }
 
       return smart.publicClient.readContract({
@@ -129,7 +161,12 @@ export function useBridgeScreenState({
   });
 
   const sourceTokenBalances = sourceTokenBalancesQuery.data;
-  const sourceBalance = selectedToken ? sourceTokenBalances?.[selectedToken.symbol] : undefined;
+  const sourceNativeBalances = sourceNativeBalancesQuery.data;
+  const sourceBalance = selectedToken
+    ? selectedToken.kind === 'nativeEthViaWeth'
+      ? sourceNativeBalances?.total
+      : sourceTokenBalances?.[selectedToken.symbol]
+    : undefined;
   const selectedTokenDisplayBalance = selectedToken ? formatTokenAmount(sourceBalance, selectedToken.decimals) : '...';
   const selectedTokenHasBalance = sourceBalance === undefined ? true : sourceBalance > 0n;
   const noBalanceTooltip = selectedToken
@@ -158,8 +195,9 @@ export function useBridgeScreenState({
 
   const refreshBridgeBalances = useCallback(() => {
     void sourceTokenBalancesQuery.refetch();
+    void sourceNativeBalancesQuery.refetch();
     void destinationBalanceQuery.refetch();
-  }, [destinationBalanceQuery, sourceTokenBalancesQuery]);
+  }, [destinationBalanceQuery, sourceNativeBalancesQuery, sourceTokenBalancesQuery]);
 
   const { executeBridge, isSubmitting, bridgePhase, clearBridgePhase, results } = useBridgeExecution({
     amountInput,
@@ -189,6 +227,7 @@ export function useBridgeScreenState({
   }, [isConnected, isWalletOnSupportedChain, walletAddress, walletChainId, refetchSmartAccountA, refetchSmartAccountB]);
 
   const accountsLoading = smartAccountAQuery.isLoading || smartAccountBQuery.isLoading;
+  const sourceBalancesLoading = sourceTokenBalancesQuery.isLoading || sourceNativeBalancesQuery.isLoading;
   const hasAmountInput = amountInput.trim().length > 0;
   const canSubmitBridge =
     isConnected &&
@@ -222,7 +261,7 @@ export function useBridgeScreenState({
   const tokenOptions: PickerOption<DemoToken['symbol']>[] = useMemo(
     () =>
       demoTokens.map((token) => {
-        const balance = sourceTokenBalances?.[token.symbol];
+        const balance = token.kind === 'nativeEthViaWeth' ? sourceNativeBalances?.total : sourceTokenBalances?.[token.symbol];
         const isNoBalance = balance !== undefined && balance === 0n;
 
         return {
@@ -233,7 +272,7 @@ export function useBridgeScreenState({
           disabled: isNoBalance
         };
       }),
-    [sourceTokenBalances]
+    [sourceNativeBalances?.total, sourceTokenBalances]
   );
 
   const resetBridgeForm = useCallback(() => {
@@ -258,8 +297,10 @@ export function useBridgeScreenState({
     destinationOptions,
     tokenOptions,
     sourceTokenBalancesQuery,
+    sourceNativeBalancesQuery,
     destinationBalanceQuery,
     accountsLoading,
+    sourceBalancesLoading,
     canSubmitBridge,
     executeBridge,
     isSubmitting,

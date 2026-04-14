@@ -1,4 +1,4 @@
-import { createComposeConfig, type ComposeRpcSchema } from '@ssv-labs/compose-sdk';
+import { createComposeConfig, type ComposeRpcSchema } from '@ssv-labs/ethera-sdk';
 import { createConfig, http } from '@wagmi/core';
 import { createPublicClient, rpcSchema, type Chain } from 'viem';
 import { injected, metaMask } from 'wagmi/connectors';
