@@ -20,6 +20,7 @@ import { resolvePaymasterByChainId } from './paymaster';
 import type { AccountAbstractionContracts, DemoToken, NetworkProfile } from './types';
 
 // Network profile builders for testnet/mainnet compose runtime setup.
+
 const resolveSingleToken = ({
   addressKey,
   decimalsKey,
@@ -41,8 +42,30 @@ const resolveSingleToken = ({
   return {
     symbol: getEnv(symbolKey) ?? defaultSymbol,
     address: toAddress(addressValue, addressKey),
-    decimals: decimalsValue ? parseNonNegativeInt(decimalsValue, decimalsKey) : defaultDecimals
+    decimals: decimalsValue ? parseNonNegativeInt(decimalsValue, decimalsKey) : defaultDecimals,
+    kind: 'erc20'
   };
+};
+
+const resolveTestnetTokens = (singleToken: DemoToken): readonly DemoToken[] => {
+  const testnetWethAddress = toAddress(getRequiredEnv('VITE_TESTNET_WETH_ADDRESS'), 'VITE_TESTNET_WETH_ADDRESS');
+
+  if (singleToken.symbol.toUpperCase() === 'ETH') {
+    throw new Error('VITE_TESTNET_TOKEN_SYMBOL must not be ETH. ETH is reserved for native bridge mode.');
+  }
+
+  const ethBridgeToken: DemoToken = {
+    symbol: 'ETH',
+    address: testnetWethAddress,
+    decimals: 18,
+    kind: 'nativeEthViaWeth'
+  };
+
+  if (singleToken.address.toLowerCase() === ethBridgeToken.address.toLowerCase()) {
+    throw new Error('VITE_TESTNET_TOKEN_ADDRESS must not be the WETH bridge token address reserved for ETH mode.');
+  }
+
+  return [singleToken, ethBridgeToken];
 };
 
 const makeTestnetChain = ({
@@ -234,7 +257,7 @@ export const createTestnetProfile = (): NetworkProfile => {
       [chainAResolved.id]: chainAContracts,
       [chainBResolved.id]: chainBContracts
     },
-    tokens: [singleToken],
+    tokens: resolveTestnetTokens(singleToken),
     paymasterByChainId,
     l1Funding
   };

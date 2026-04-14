@@ -47,7 +47,10 @@ For realistic POC setups, prefer a single explicit token:
 VITE_TESTNET_TOKEN_ADDRESS=0x...
 VITE_TESTNET_TOKEN_DECIMALS=18
 VITE_TESTNET_TOKEN_SYMBOL=BTK
+VITE_TESTNET_WETH_ADDRESS=0x... # required for ETH mode (L2->L2)
 ```
+
+`VITE_TESTNET_WETH_ADDRESS` is required in testnet mode. If it is missing or invalid, the app fails fast on startup so ETH bridge mode cannot run with an incorrect contract address.
 
 ## Paymaster support
 

@@ -7,10 +7,13 @@ export type AccountAbstractionContracts = {
   metaFactory: `0x${string}`;
 };
 
+export type DemoTokenKind = 'erc20' | 'nativeEthViaWeth';
+
 export type DemoToken = {
   symbol: string;
   address: `0x${string}`;
   decimals: number;
+  kind: DemoTokenKind;
 };
 
 export type L1FundingConfig = {
