@@ -1,4 +1,4 @@
-import { composeUnpreparedUserOps } from '@ssv-labs/compose-sdk';
+import { composeUnpreparedUserOps } from '@ssv-labs/ethera-sdk';
 import { erc20Abi } from 'viem';
 import {
   COMPOSE_BUILD_TIMEOUT_MS,

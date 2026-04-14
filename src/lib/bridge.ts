@@ -1,4 +1,4 @@
-import { createAbiEncoder } from '@ssv-labs/compose-sdk';
+import { createAbiEncoder } from '@ssv-labs/ethera-sdk';
 import { erc20Abi } from 'viem';
 
 export const bridgeAbi = [

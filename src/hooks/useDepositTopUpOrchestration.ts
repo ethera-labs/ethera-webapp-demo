@@ -1,4 +1,4 @@
-import type { useSmartAccount } from '@ssv-labs/compose-sdk/react';
+import type { useSmartAccount } from '@ssv-labs/ethera-sdk/react';
 import { useCallback, useState } from 'react';
 import { parseEther } from 'viem';
 import { normalizeExecutionErrorMessage } from '../lib/errors';

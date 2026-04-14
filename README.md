@@ -1,6 +1,6 @@
 # Ethera Rollup Bridge
 
-Cross-rollup token bridge demo built with `@ssv-labs/compose-sdk`.
+Cross-rollup token bridge demo built with `@ssv-labs/ethera-sdk`.
 
 ## What this app demonstrates
 

@@ -1,4 +1,4 @@
-import type { useSmartAccount } from '@ssv-labs/compose-sdk/react';
+import type { useSmartAccount } from '@ssv-labs/ethera-sdk/react';
 import type { Chain } from 'viem';
 import type { DemoToken } from '../../composeConfig';
 import type { BridgeReceiptStatus } from '../../types/bridge';

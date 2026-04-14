@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useSmartAccount } from '@ssv-labs/compose-sdk/react';
+import { useSmartAccount } from '@ssv-labs/ethera-sdk/react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { erc20Abi } from 'viem';
 import { chainA, chainB, bridgeAddress, composeConfig, demoTokens, networkProfile, type DemoToken } from '../composeConfig';
