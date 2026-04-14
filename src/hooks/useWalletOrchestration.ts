@@ -132,6 +132,7 @@ export function useWalletOrchestration({
 
     queryClient.removeQueries({ queryKey: ['smart-account'] });
     queryClient.removeQueries({ queryKey: ['source-token-balances'] });
+    queryClient.removeQueries({ queryKey: ['source-native-balances'] });
     queryClient.removeQueries({ queryKey: ['destination-balance'] });
     queryClient.removeQueries({ queryKey: ['l1-native-balance'] });
   }, [disconnectAsync, onWalletError, queryClient]);

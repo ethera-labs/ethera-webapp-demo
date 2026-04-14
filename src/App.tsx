@@ -95,9 +95,9 @@ function App() {
     sourceOptions,
     destinationOptions,
     tokenOptions,
-    sourceTokenBalancesQuery,
     destinationBalanceQuery,
     accountsLoading,
+    sourceBalancesLoading,
     canSubmitBridge,
     executeBridge,
     isSubmitting,
@@ -384,6 +384,9 @@ function App() {
             <p className="hint">
               Funds route from <strong>{sourceChain.name}</strong> to <strong>{destinationChain.name}</strong>.
             </p>
+            {selectedToken.kind === 'nativeEthViaWeth' ? (
+              <p className="hint">ETH mode enabled. Destination account receives native ETH.</p>
+            ) : null}
 
             <div className="bridge-summary">
               <p className="bridge-summary-tag">Balance</p>
@@ -417,7 +420,7 @@ function App() {
             {!networkProfile.paymasterByChainId ? <p className="hint hint-warning">Paymaster disabled</p> : null}
             {networkProfile.paymasterByChainId ? <p className="hint hint-success">Paymaster enabled</p> : null}
             {accountsLoading ? <p className="hint">Creating smart accounts on both chains...</p> : null}
-            {sourceTokenBalancesQuery.isLoading ? <p className="hint">Checking source token balances...</p> : null}
+            {sourceBalancesLoading ? <p className="hint">Checking source balances...</p> : null}
           </>
         ) : (
           <>
