@@ -15,6 +15,7 @@ export type BridgeCall = {
 
 export type WalletClientLike = {
   writeContract: (...args: unknown[]) => Promise<`0x${string}`>;
+  sendTransaction: (...args: unknown[]) => Promise<`0x${string}`>;
   getChainId: () => Promise<number>;
 };
 
@@ -41,11 +42,18 @@ export type ValidateBridgeExecutionInputResult =
   | { ok: true; value: ValidBridgeExecutionInput }
   | { ok: false; error: string };
 
-export type SourceFundingContext = {
-  sourceTotalBalanceOnChain: bigint;
-  amountToPullFromEoa: bigint;
-  sourceAllowance: bigint;
-};
+export type SourceFundingContext =
+  | {
+      kind: 'erc20';
+      sourceTotalBalanceOnChain: bigint;
+      amountToPullFromEoa: bigint;
+      sourceAllowance: bigint;
+    }
+  | {
+      kind: 'nativeEthViaWeth';
+      sourceTotalBalanceOnChain: bigint;
+      amountToFundSmartAccountFromEoa: bigint;
+    };
 
 export type BuildBridgeCallsParams = {
   selectedToken: DemoToken;
@@ -80,8 +88,7 @@ export type ExecuteComposedBridgeFlowParams = {
   selectedToken: DemoToken;
   walletAddress: `0x${string}`;
   sender: `0x${string}`;
-  amountToPullFromEoa: bigint;
-  sourceAllowance: bigint;
+  fundingContext: SourceFundingContext;
   ensureWalletOnChain: (targetChainId: number) => Promise<unknown>;
   setBridgePhase: (value: string | null) => void;
   onPayloadSubmitted: (params: { hashesToTrack: `0x${string}`[]; explorerUrls: string[] }) => void;

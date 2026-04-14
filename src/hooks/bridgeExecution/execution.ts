@@ -73,13 +73,33 @@ export const executeComposedBridgeFlow = async ({
   selectedToken,
   walletAddress,
   sender,
-  amountToPullFromEoa,
-  sourceAllowance,
+  fundingContext,
   ensureWalletOnChain,
   setBridgePhase,
   onPayloadSubmitted
 }: ExecuteComposedBridgeFlowParams): Promise<ExecuteComposedBridgeFlowResult> => {
-  if (amountToPullFromEoa > 0n && sourceAllowance < amountToPullFromEoa) {
+  // ETH mode may need a native EOA -> smart-account transfer before source userOp creation.
+  if (fundingContext.kind === 'nativeEthViaWeth' && fundingContext.amountToFundSmartAccountFromEoa > 0n) {
+    setBridgePhase(`Funding source smart account with ${selectedToken.symbol}...`);
+
+    const walletClient = (await ensureWalletOnChain(sourceChain.id)) as WalletClientLike;
+    const fundingHash = await walletClient.sendTransaction({
+      to: sender,
+      value: fundingContext.amountToFundSmartAccountFromEoa,
+      chain: sourceChain,
+      account: walletAddress
+    });
+
+    setBridgePhase('Waiting for source funding confirmation...');
+    await sourceSmartAccount.publicClient.waitForTransactionReceipt({ hash: fundingHash });
+  }
+
+  // ERC20 approval flow remains BTK-only and is skipped for ETH mode.
+  if (
+    fundingContext.kind === 'erc20' &&
+    fundingContext.amountToPullFromEoa > 0n &&
+    fundingContext.sourceAllowance < fundingContext.amountToPullFromEoa
+  ) {
     setBridgePhase(`Approving ${selectedToken.symbol} pull from source EOA...`);
 
     const walletClient = (await ensureWalletOnChain(sourceChain.id)) as WalletClientLike;
@@ -87,7 +107,7 @@ export const executeComposedBridgeFlow = async ({
       address: selectedToken.address,
       abi: erc20Abi,
       functionName: 'approve',
-      args: [sender, amountToPullFromEoa],
+      args: [sender, fundingContext.amountToPullFromEoa],
       chain: sourceChain,
       account: walletAddress
     });

@@ -152,6 +152,8 @@ export function useBridgeExecution({
       }
 
       const sessionId = BigInt(Date.now());
+      // Only ERC20 mode needs transferFrom pull from EOA; ETH mode pre-funds native in execution step.
+      const amountToPullFromEoa = fundingContext.kind === 'erc20' ? fundingContext.amountToPullFromEoa : 0n;
       const { sourceCalls, destinationCalls } = buildBridgeCalls({
         selectedToken: validatedToken,
         walletAddress: validatedWalletAddress,
@@ -163,7 +165,7 @@ export function useBridgeExecution({
         destinationChainId: destinationChain.id,
         amount,
         sessionId,
-        amountToPullFromEoa: fundingContext.amountToPullFromEoa
+        amountToPullFromEoa
       });
 
       const shouldCheckEntryPointDeposit = !options?.skipDepositCheck && !hasPaymaster;
@@ -197,8 +199,8 @@ export function useBridgeExecution({
           selectedToken: validatedToken,
           walletAddress: validatedWalletAddress,
           sender,
-          amountToPullFromEoa: fundingContext.amountToPullFromEoa,
-          sourceAllowance: fundingContext.sourceAllowance,
+          // Funding context carries mode-specific precompose requirements (native prefund vs ERC20 approval).
+          fundingContext,
           ensureWalletOnChain,
           setBridgePhase,
           onPayloadSubmitted: ({ hashesToTrack, explorerUrls }) => {
