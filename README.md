@@ -8,83 +8,85 @@ Cross-rollup token bridge demo built with `@ssv-labs/ethera-sdk`.
 - Multi-chain user-op creation with the SDK (`createUserOp`)
 - Atomic composition with `composeUnpreparedUserOps`
 - Cross-rollup submission and receipt tracking
-- Clean, client-friendly UI with Ethera + SSV-inspired styling
 
 ## Run locally
 
 ```bash
 npm install
-cp .env.example .env
+cp .env.testnet.example .env
 npm run dev
 ```
 
 The frontend runs on `http://localhost:5173`.
 
-## Current default mode
+## Environment setup
 
-- `VITE_COMPOSE_NETWORK=testnet`
-- Uses SDK rollup chains/contracts unless overridden in `.env`
-- Uses one explicit bridged token from env (`VITE_TESTNET_TOKEN_ADDRESS`)
-
-## Sepolia rollup override support
-
-You can override testnet rollups directly from `.env` (RPC, explorer, chain IDs, bridge/token addresses, token symbols, and AA contracts) without touching code.
-
-Minimal example:
+Use one of the minimal templates:
 
 ```bash
-VITE_COMPOSE_NETWORK=testnet
-VITE_TESTNET_LABEL=Custom Testnet
-VITE_TESTNET_ROLLUP_A_CHAIN_ID=111111
-VITE_TESTNET_ROLLUP_A_RPC=https://rollup-a-rpc.example.com/
-VITE_TESTNET_ROLLUP_B_CHAIN_ID=222222
-VITE_TESTNET_ROLLUP_B_RPC=https://rollup-b-rpc.example.com/
+cp .env.testnet.example .env
+# or
+cp .env.mainnet.example .env
 ```
 
-For realistic POC setups, prefer a single explicit token:
+Notes:
+
+- `.env.testnet.example` is the minimal client-demo setup for testnet.
+- `.env.mainnet.example` is the minimal mainnet scaffold (includes required AA keys).
+
+### Paymaster (optional)
+
+Paymaster is optional and controlled by endpoint config presence:
+
+- If paymaster endpoint config is present, app runs in sponsored mode.
+- If paymaster endpoint config is absent, app runs in non-sponsored mode.
+
+Recommended pattern (included as commented lines in both env templates):
+
+- Base URL + default route names.
+- Testnet defaults: `rollupA` and `rollupB`
+- Mainnet defaults: `mainnet` and `base`
+
+Example:
 
 ```bash
-VITE_TESTNET_TOKEN_ADDRESS=0x...
-VITE_TESTNET_TOKEN_DECIMALS=18
-VITE_TESTNET_TOKEN_SYMBOL=BTK
-VITE_TESTNET_WETH_ADDRESS=0x... # required for ETH mode (L2->L2)
+VITE_TESTNET_PAYMASTER_BASE_URL=https://paymaster.example.com/rpc/v1
+# optional, defaults are already wired
+VITE_TESTNET_ROLLUP_A_PAYMASTER_NAME=rollupA
+VITE_TESTNET_ROLLUP_B_PAYMASTER_NAME=rollupB
 ```
 
-`VITE_TESTNET_WETH_ADDRESS` is required in testnet mode. If it is missing or invalid, the app fails fast on startup so ETH bridge mode cannot run with an incorrect contract address.
+### Advanced paymaster overrides
 
-## Paymaster support
+Supported override patterns:
 
-The app is paymaster-ready. SDK `createUserOps` requests sponsorship data when paymaster is configured.
+1. Shared endpoint for all chains:
+   - `VITE_TESTNET_PAYMASTER_URL`
+   - `VITE_MAINNET_PAYMASTER_URL`
+2. Explicit per-chain endpoints:
+   - `VITE_TESTNET_ROLLUP_A_PAYMASTER_URL`
+   - `VITE_TESTNET_ROLLUP_B_PAYMASTER_URL`
+   - `VITE_MAINNET_MAINNET_PAYMASTER_URL`
+   - `VITE_MAINNET_BASE_PAYMASTER_URL`
+3. Base endpoint + custom route names:
+   - `VITE_TESTNET_PAYMASTER_BASE_URL` + route-name overrides
+   - `VITE_MAINNET_PAYMASTER_BASE_URL` + route-name overrides
 
-You can configure:
+Endpoint precedence in app config:
 
-- One shared endpoint: `VITE_TESTNET_PAYMASTER_URL` / `VITE_MAINNET_PAYMASTER_URL`
-- Or dynamic base endpoint + chain route names:
-  - `VITE_TESTNET_PAYMASTER_BASE_URL`
-  - `VITE_TESTNET_ROLLUP_A_PAYMASTER_NAME`
-  - `VITE_TESTNET_ROLLUP_B_PAYMASTER_NAME`
-- Or explicit per-chain endpoints:
-  - `VITE_TESTNET_ROLLUP_A_PAYMASTER_URL`
-  - `VITE_TESTNET_ROLLUP_B_PAYMASTER_URL`
-  - `VITE_MAINNET_MAINNET_PAYMASTER_URL`
-  - `VITE_MAINNET_BASE_PAYMASTER_URL`
+- Per-chain endpoint override
+- Base endpoint + route name
+- Shared endpoint
 
-Recommended local setup:
+## SDK boundary
 
-- Dynamic mapping from one base URL:
-  - `VITE_TESTNET_PAYMASTER_BASE_URL=https://paymaster.example.com/rpc/v1`
-  - `VITE_TESTNET_ROLLUP_A_PAYMASTER_NAME=rollupA`
-  - `VITE_TESTNET_ROLLUP_B_PAYMASTER_NAME=rollupB`
+`@ssv-labs/ethera-sdk` provides:
 
-If paymaster env is omitted, the app runs in non-sponsored mode (smart accounts need native gas).
+- paymaster integration plumbing (`getPaymasterEndpoint` callback flow)
+- SDK defaults for rollup chains and AA testnet contracts
 
-## Mainnet-ready scaffold
+The webapp/environment provides:
 
-A config scaffold exists for mainnet in `.env.example`, but it is intentionally disabled by default.
-To activate mainnet mode, set:
-
-```bash
-VITE_COMPOSE_NETWORK=mainnet
-```
-
-Then provide all required mainnet RPC and account abstraction contract values.
+- concrete paymaster endpoint URLs
+- bridge/token/WETH/L1 bridge addresses
+- optional route-name overrides
