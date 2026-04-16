@@ -8,6 +8,7 @@ Cross-rollup token bridge demo built with `@ssv-labs/ethera-sdk`.
 - Multi-chain user-op creation with the SDK (`createUserOp`)
 - Atomic composition with `composeUnpreparedUserOps`
 - Cross-rollup submission and receipt tracking
+- End-to-end demo path: `L1 -> L2 -> L2 -> L1` (return leg initiates withdrawal on rollup)
 
 ## Run locally
 
@@ -33,6 +34,29 @@ Notes:
 
 - `.env.testnet.example` is the minimal client-demo setup for testnet.
 - `.env.mainnet.example` is the minimal mainnet scaffold (includes required AA keys).
+
+## Complete flow
+
+This demo now supports the full path:
+
+1. `L1 -> L2` native ETH funding
+2. `L2 -> L2` bridge (ERC-20 and ETH mode)
+3. `L2 -> L1` native ETH return:
+   - initiate on rollup
+   - prove on L1
+   - finalize on L1
+
+For `L2 -> L1`, L2 initiation deducts balance on rollup immediately.
+ETH appears on L1 only after prove + finalize complete.
+
+No additional env keys are required for the return leg when L1 bridge config is already set (`VITE_TESTNET_L1_TO_ROLLUP_A_BRIDGE`, `VITE_TESTNET_L1_TO_ROLLUP_B_BRIDGE`, `VITE_TESTNET_L1_BRIDGE_MIN_GAS_LIMIT`).
+
+Important behavior notes:
+
+- Users do not call the L1 standard bridge directly for settlement.
+- Settlement is completed through Optimism Portal prove/finalize calls (resolved dynamically from configured L1 bridge).
+- Withdrawal readiness/prove selection uses Compose dispute-game decoding (`extraData`) + portal checks, not OP default game decoding.
+- Sequencer/proposer do not automatically credit L1 wallet balance without prove/finalize.
 
 ### Paymaster (optional)
 

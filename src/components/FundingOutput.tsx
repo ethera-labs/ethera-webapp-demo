@@ -5,9 +5,13 @@ import { formatRunTimestamp, getStatusTag } from './transactionOutput.utils';
 
 type FundingOutputProps = {
   results: FundingResult[];
+  title?: string;
+  emptyMessage?: string;
+  archiveSummaryLabel?: string;
+  pendingMessage?: string;
 };
 
-const renderFundingCard = (result: FundingResult) => {
+const renderFundingCard = (result: FundingResult, pendingMessage: string) => {
   const status = getStatusTag(result.status);
 
   return (
@@ -21,7 +25,7 @@ const renderFundingCard = (result: FundingResult) => {
         </div>
       </div>
 
-      {result.status === 'pending' ? <p className="hint tx-progress-note">Waiting for L1 confirmation.</p> : null}
+      {result.status === 'pending' ? <p className="hint tx-progress-note">{pendingMessage}</p> : null}
 
       <div className="tx-list">
         <div className="tx-item">
@@ -55,14 +59,20 @@ const renderFundingCard = (result: FundingResult) => {
   );
 };
 
-export function FundingOutput({ results }: FundingOutputProps) {
+export function FundingOutput({
+  results,
+  title = 'Transactions',
+  emptyMessage = 'Run an L1 transaction to see hashes and explorer links.',
+  archiveSummaryLabel = 'Show previous transactions',
+  pendingMessage = 'Waiting for L1 confirmation.'
+}: FundingOutputProps) {
   return (
     <TransactionHistorySection
-      title="Transactions"
-      emptyMessage="Run an L1 transaction to see hashes and explorer links."
-      archiveSummaryLabel="Show previous transactions"
+      title={title}
+      emptyMessage={emptyMessage}
+      archiveSummaryLabel={archiveSummaryLabel}
       results={results}
-      renderCard={renderFundingCard}
+      renderCard={(result) => renderFundingCard(result, pendingMessage)}
     />
   );
 }

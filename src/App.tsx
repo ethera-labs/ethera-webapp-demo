@@ -3,18 +3,20 @@ import { chainA, chainB, composeConfig, l1FundingConfig, networkProfile } from '
 import { DepositTopUpModal } from './components/DepositTopUpModal';
 import { FundingOutput } from './components/FundingOutput';
 import { Picker } from './components/Picker';
+import { ReturnOutput } from './components/ReturnOutput';
 import { TransactionOutput } from './components/TransactionOutput';
 import { WalletPanel } from './components/WalletPanel';
 import { formatTokenAmount } from './lib/format';
 import { useBridgeScreenState } from './hooks/useBridgeScreenState';
 import { useDepositTopUpOrchestration } from './hooks/useDepositTopUpOrchestration';
 import { useFundingScreenState } from './hooks/useFundingScreenState';
+import { useReturnScreenState } from './hooks/useReturnScreenState';
 import { useWalletOrchestration } from './hooks/useWalletOrchestration';
 import './App.css';
 
 // Root container that wires bridge/funding orchestration hooks into the UI.
-type OpenMenu = 'source' | 'destination' | 'token' | 'fund-destination' | null;
-type FlowMode = 'bridge' | 'fund';
+type OpenMenu = 'source' | 'destination' | 'token' | 'fund-destination' | 'return-source' | null;
+type FlowMode = 'bridge' | 'fund' | 'return';
 
 const BASE_SUPPORTED_CHAIN_IDS = [chainA.id, chainB.id] as const;
 
@@ -149,6 +151,42 @@ function App() {
     onFundingError: showError
   });
 
+  const {
+    returnSourceChainId,
+    returnAmountInput,
+    returnSourceChain,
+    selectedReturnSourceChainLabel,
+    selectedReturnDestinationChainLabel,
+    selectedReturnSourceChainName,
+    selectedReturnDestinationChainName,
+    returnSourceOptions,
+    returnNativeBalance,
+    returnNativeBalanceQuery,
+    l1NativeBalance: returnL1NativeBalance,
+    l1NativeBalanceQuery: returnL1NativeBalanceQuery,
+    resolvedL2BridgeAddress,
+    resolvedL2BridgeAddressQuery,
+    settlementContracts,
+    settlementContractsQuery,
+    executeReturn,
+    proveReturn,
+    finalizeReturn,
+    isReturnSubmitting,
+    returnPhase,
+    clearReturnPhase,
+    returnResults,
+    canSubmitReturn,
+    setReturnSourceChainId,
+    setReturnAmountInput,
+    resetReturnForm
+  } = useReturnScreenState({
+    walletAddress,
+    isConnected,
+    ensureWalletOnChain,
+    onClearErrors: clearErrors,
+    onReturnError: showError
+  });
+
   useEffect(() => {
     const handleOutsideClick = (event: MouseEvent) => {
       if (!dropdownAreaRef.current) return;
@@ -168,6 +206,15 @@ function App() {
     void switchWalletToChain(sourceChainId);
   }, [isConnected, sourceChainId, supportedChainIds, switchWalletToChain, walletChainId]);
 
+  const handleFinalizeReturn = useCallback(async (sessionId: bigint) => {
+    const didFinalize = await finalizeReturn(sessionId);
+    if (didFinalize) {
+      setSuccessNotice('L1 finalization complete. Returned ETH should now be visible in your L1 wallet balance.');
+    }
+
+    return didFinalize;
+  }, [finalizeReturn]);
+
   const handleFlowModeChange = useCallback(
     (nextFlowMode: FlowMode) => {
       setFlowMode(nextFlowMode);
@@ -176,8 +223,9 @@ function App() {
       setOpenMenu(null);
       closeDepositModal(clearBridgePhase);
       clearFundingPhase();
+      clearReturnPhase();
     },
-    [clearBridgePhase, clearFundingPhase, closeDepositModal]
+    [clearBridgePhase, clearFundingPhase, clearReturnPhase, closeDepositModal]
   );
 
   const handleDisconnect = useCallback(async () => {
@@ -186,10 +234,21 @@ function App() {
     setOpenMenu(null);
     closeDepositModal(clearBridgePhase);
     clearFundingPhase();
+    clearReturnPhase();
     resetBridgeForm();
     resetFundingForm();
+    resetReturnForm();
     await disconnectWallet();
-  }, [clearBridgePhase, clearFundingPhase, closeDepositModal, disconnectWallet, resetBridgeForm, resetFundingForm]);
+  }, [
+    clearBridgePhase,
+    clearFundingPhase,
+    clearReturnPhase,
+    closeDepositModal,
+    disconnectWallet,
+    resetBridgeForm,
+    resetFundingForm,
+    resetReturnForm
+  ]);
 
   const activeFlowMode: FlowMode = l1FundingConfig ? flowMode : 'bridge';
 
@@ -265,7 +324,13 @@ function App() {
         {error ? (
           <div className="status-banner status-banner-error" role="alert" aria-live="polite">
             <div>
-              <p className="status-banner-title">{activeFlowMode === 'fund' ? 'Funding failed' : 'Bridge failed'}</p>
+              <p className="status-banner-title">
+                {activeFlowMode === 'fund'
+                  ? 'Funding failed'
+                  : activeFlowMode === 'return'
+                    ? 'Return bridge failed'
+                    : 'Bridge failed'}
+              </p>
               <p className="status-banner-message">{error}</p>
             </div>
             <button type="button" className="status-banner-close" aria-label="Dismiss error" onClick={() => setError(null)}>
@@ -277,7 +342,7 @@ function App() {
         {successNotice && !error ? (
           <div className="status-banner status-banner-success" role="status" aria-live="polite">
             <div>
-              <p className="status-banner-title">Funding complete</p>
+              <p className="status-banner-title">Operation complete</p>
               <p className="status-banner-message">{successNotice}</p>
             </div>
             <button
@@ -310,6 +375,15 @@ function App() {
               onClick={() => handleFlowModeChange('fund')}
             >
               L1 to Rollup Bridge
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeFlowMode === 'return'}
+              className={`flow-toggle-btn ${activeFlowMode === 'return' ? 'flow-toggle-btn-active' : ''}`}
+              onClick={() => handleFlowModeChange('return')}
+            >
+              Rollup to L1 Bridge
             </button>
           </div>
         ) : null}
@@ -422,7 +496,7 @@ function App() {
             {accountsLoading ? <p className="hint">Creating smart accounts on both chains...</p> : null}
             {sourceBalancesLoading ? <p className="hint">Checking source balances...</p> : null}
           </>
-        ) : (
+        ) : activeFlowMode === 'fund' ? (
           <>
             <div className="grid" ref={dropdownAreaRef}>
               <label className="field">
@@ -510,10 +584,121 @@ function App() {
             ) : null}
             {l1NativeBalanceQuery.isLoading ? <p className="hint">Checking L1 balance...</p> : null}
           </>
+        ) : (
+          <>
+            <div className="grid" ref={dropdownAreaRef}>
+              <label className="field">
+                <span>Source Rollup</span>
+                <Picker
+                  ariaLabel="Select return source rollup"
+                  open={openMenu === 'return-source'}
+                  valueLeft={selectedReturnSourceChainLabel}
+                  onToggle={() => setOpenMenu((prev) => (prev === 'return-source' ? null : 'return-source'))}
+                  onSelect={(value) => {
+                    setReturnSourceChainId(value);
+                    setOpenMenu(null);
+                  }}
+                  options={returnSourceOptions}
+                  selectedValue={returnSourceChainId}
+                />
+              </label>
+
+              <label className="field">
+                <span>Destination (L1)</span>
+                <input className="readonly-input" value={selectedReturnDestinationChainLabel} readOnly />
+              </label>
+
+              <label className="field">
+                <span>Recipient</span>
+                <input className="readonly-input mono" value={walletAddress ?? 'Connect wallet first'} readOnly />
+              </label>
+
+              <label className="field">
+                <span>ETH amount</span>
+                <input
+                  className="amount-input"
+                  value={returnAmountInput}
+                  onChange={(event) => setReturnAmountInput(event.target.value)}
+                  inputMode="decimal"
+                  placeholder="0.01"
+                />
+              </label>
+            </div>
+
+            <p className="hint">
+              Return native ETH from <strong>{selectedReturnSourceChainName}</strong> to{' '}
+              <strong>{selectedReturnDestinationChainName}</strong>.
+            </p>
+            <p className="hint">L2 initiation deducts immediately. L1 balance updates only after prove + finalize.</p>
+            <p className="hint">This submits the withdrawal on L2. Finalization on L1 is asynchronous.</p>
+
+            <div className="bridge-summary">
+              <p className="bridge-summary-tag">Balance</p>
+              <div>
+                <p className="summary-title">Source Rollup Balance</p>
+                <p className="summary-value">{formatTokenAmount(returnNativeBalance, 18)} ETH</p>
+              </div>
+              <div>
+                <p className="summary-title">L2 Bridge Contract</p>
+                <p className="summary-value mono">
+                  {resolvedL2BridgeAddress && returnSourceChain.blockExplorers?.default?.url ? (
+                    <a
+                      href={`${returnSourceChain.blockExplorers.default.url.replace(/\/$/, '')}/address/${resolvedL2BridgeAddress}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {resolvedL2BridgeAddress}
+                    </a>
+                  ) : (
+                    resolvedL2BridgeAddress ?? 'Resolving bridge counterpart...'
+                  )}
+                </p>
+              </div>
+              <div>
+                <p className="summary-title">L1 Balance</p>
+                <p className="summary-value">{formatTokenAmount(returnL1NativeBalance, 18)} ETH</p>
+              </div>
+            </div>
+
+            <button
+              className={`btn btn-primary big ${isReturnSubmitting ? 'btn-loading' : ''}`}
+              disabled={!canSubmitReturn}
+              aria-busy={isReturnSubmitting}
+              onClick={() => {
+                void executeReturn();
+              }}
+            >
+              <span className="btn-label">{isReturnSubmitting ? 'Submitting rollup withdrawal...' : 'Bridge Back to L1'}</span>
+            </button>
+            {isReturnSubmitting && returnPhase ? <p className="hint">{returnPhase}</p> : null}
+
+            {!isConnected ? <p className="hint">Connect a wallet to bridge native ETH back to L1.</p> : null}
+            {resolvedL2BridgeAddressQuery.isLoading ? <p className="hint">Resolving L2 bridge counterpart...</p> : null}
+            {resolvedL2BridgeAddressQuery.isError ? (
+              <p className="hint hint-warning">Could not resolve L2 bridge counterpart for selected rollup.</p>
+            ) : null}
+            {settlementContractsQuery.isLoading ? <p className="hint">Resolving L1 settlement contracts...</p> : null}
+            {settlementContractsQuery.isError ? (
+              <p className="hint hint-warning">Could not resolve L1 settlement contracts for selected rollup.</p>
+            ) : null}
+            {settlementContracts ? <p className="hint">L1 settlement contract resolved via dynamic bridge to messenger to portal.</p> : null}
+            {returnNativeBalanceQuery.isLoading ? <p className="hint">Checking source rollup balance...</p> : null}
+            {returnL1NativeBalanceQuery.isLoading ? <p className="hint">Checking L1 destination balance...</p> : null}
+          </>
         )}
       </section>
 
-      {activeFlowMode === 'bridge' ? <TransactionOutput results={results} /> : <FundingOutput results={fundingResults} />}
+      {activeFlowMode === 'bridge' ? (
+        <TransactionOutput results={results} />
+      ) : activeFlowMode === 'fund' ? (
+        <FundingOutput results={fundingResults} />
+      ) : (
+        <ReturnOutput
+          results={returnResults}
+          onProve={proveReturn}
+          onFinalize={handleFinalizeReturn}
+        />
+      )}
     </main>
   );
 }

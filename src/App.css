@@ -833,6 +833,13 @@ h1 {
   border-top: 1px solid rgba(13, 26, 45, 0.12);
 }
 
+.return-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-top: 0.25rem;
+}
+
 .tx-label {
   font-size: 0.81rem;
   font-weight: 600;
