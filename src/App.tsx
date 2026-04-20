@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { chainA, chainB, composeConfig, l1FundingConfig, networkProfile } from './composeConfig';
 import { DepositTopUpModal } from './components/DepositTopUpModal';
+import { FlowBalanceSummary } from './components/FlowBalanceSummary';
 import { FundingOutput } from './components/FundingOutput';
 import { Picker } from './components/Picker';
 import { ReturnOutput } from './components/ReturnOutput';
+import { TokenImportPanel } from './components/TokenImportPanel';
 import { TransactionOutput } from './components/TransactionOutput';
 import { WalletPanel } from './components/WalletPanel';
 import { formatTokenAmount } from './lib/format';
@@ -15,7 +17,15 @@ import { useWalletOrchestration } from './hooks/useWalletOrchestration';
 import './App.css';
 
 // Root container that wires bridge/funding orchestration hooks into the UI.
-type OpenMenu = 'source' | 'destination' | 'token' | 'fund-destination' | 'return-source' | null;
+type OpenMenu =
+  | 'source'
+  | 'destination'
+  | 'token'
+  | 'fund-destination'
+  | 'fund-token'
+  | 'return-source'
+  | 'return-token'
+  | null;
 type FlowMode = 'bridge' | 'fund' | 'return';
 
 const BASE_SUPPORTED_CHAIN_IDS = [chainA.id, chainB.id] as const;
@@ -27,6 +37,7 @@ function App() {
   const [flowMode, setFlowMode] = useState<FlowMode>('fund');
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
   const [isFundingImportOpen, setIsFundingImportOpen] = useState(false);
+  const [isReturnImportOpen, setIsReturnImportOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
   const dropdownAreaRef = useRef<HTMLDivElement | null>(null);
@@ -131,6 +142,7 @@ function App() {
     fundingTokenValue,
     selectedFundingToken,
     selectedFundingSourceBalance,
+    selectedFundingDestinationDisplayBalance,
     selectedFundingTokenDisplayBalance,
     selectedFundingSourceChainLabel,
     selectedFundingDestinationChainLabel,
@@ -140,6 +152,7 @@ function App() {
     fundingTokenOptions,
     l1NativeBalanceQuery,
     l1TokenBalancesQuery,
+    destinationFundingBalanceQuery,
     executeFunding,
     isFundingSubmitting,
     fundingPhase,
@@ -166,20 +179,23 @@ function App() {
   const {
     returnSourceChainId,
     returnAmountInput,
+    returnTokenValue,
     returnSourceChain,
+    selectedReturnToken,
+    selectedReturnTokenDisplayBalance,
+    selectedReturnDestinationDisplayBalance,
     selectedReturnSourceChainLabel,
     selectedReturnDestinationChainLabel,
     selectedReturnSourceChainName,
     selectedReturnDestinationChainName,
     returnSourceOptions,
-    returnNativeBalance,
+    returnTokenOptions,
     returnNativeBalanceQuery,
-    l1NativeBalance: returnL1NativeBalance,
     l1NativeBalanceQuery: returnL1NativeBalanceQuery,
+    returnErc20AssetsQuery,
     resolvedL2BridgeAddress,
-    resolvedL2BridgeAddressQuery,
+    returnRouteQuery,
     settlementContracts,
-    settlementContractsQuery,
     executeReturn,
     proveReturn,
     finalizeReturn,
@@ -188,8 +204,14 @@ function App() {
     clearReturnPhase,
     returnResults,
     canSubmitReturn,
+    returnImportTokenAddressInput,
+    returnImportTokenError,
+    isImportingReturnToken,
     setReturnSourceChainId,
     setReturnAmountInput,
+    setReturnTokenValue,
+    setReturnImportTokenAddressInput,
+    importReturnToken,
     resetReturnForm
   } = useReturnScreenState({
     walletAddress,
@@ -221,7 +243,7 @@ function App() {
   const handleFinalizeReturn = useCallback(async (sessionId: bigint) => {
     const didFinalize = await finalizeReturn(sessionId);
     if (didFinalize) {
-      setSuccessNotice('L1 finalization complete. Returned ETH should now be visible in your L1 wallet balance.');
+      setSuccessNotice('L1 finalization complete. Returned assets should now be visible in your L1 wallet balance.');
     }
 
     return didFinalize;
@@ -234,6 +256,7 @@ function App() {
       setSuccessNotice(null);
       setOpenMenu(null);
       setIsFundingImportOpen(false);
+      setIsReturnImportOpen(false);
       closeDepositModal(clearBridgePhase);
       clearFundingPhase();
       clearReturnPhase();
@@ -246,6 +269,7 @@ function App() {
     setSuccessNotice(null);
     setOpenMenu(null);
     setIsFundingImportOpen(false);
+    setIsReturnImportOpen(false);
     closeDepositModal(clearBridgePhase);
     clearFundingPhase();
     clearReturnPhase();
@@ -548,10 +572,10 @@ function App() {
                 <span>Asset</span>
                 <Picker
                   ariaLabel="Select L1 funding token"
-                  open={openMenu === 'token'}
+                  open={openMenu === 'fund-token'}
                   valueLeft={selectedFundingToken.symbol}
                   valueRight={selectedFundingTokenDisplayBalance}
-                  onToggle={() => setOpenMenu((prev) => (prev === 'token' ? null : 'token'))}
+                  onToggle={() => setOpenMenu((prev) => (prev === 'fund-token' ? null : 'fund-token'))}
                   onSelect={(value) => {
                     setFundingTokenValue(value);
                     setOpenMenu(null);
@@ -578,79 +602,56 @@ function App() {
               </label>
             </div>
 
-            <div className="funding-import-toggle-row">
-              <button
-                type="button"
-                className="btn btn-secondary btn-compact"
-                onClick={() => {
-                  setIsFundingImportOpen((current) => !current);
-                }}
-              >
-                <span className="btn-label">{isFundingImportOpen ? 'Hide import token' : 'Import token'}</span>
-              </button>
-            </div>
-
-            {isFundingImportOpen ? (
-              <div className="funding-import-panel">
-                <div className="funding-import-row">
-                  <label className="field">
-                    <span>Import token</span>
-                    <input
-                      className="mono"
-                      value={importTokenAddressInput}
-                      onChange={(event) => setImportTokenAddressInput(event.target.value)}
-                      placeholder="0x..."
-                    />
-                  </label>
-
-                  <button
-                    type="button"
-                    className={`btn btn-secondary btn-compact ${isImportingToken ? 'btn-loading' : ''}`}
-                    disabled={!importTokenAddressInput.trim() || isImportingToken}
-                    aria-busy={isImportingToken}
-                    onClick={() => {
-                      void importFundingToken();
-                    }}
-                  >
-                    <span className="btn-label">{isImportingToken ? 'Importing...' : 'Import token'}</span>
-                  </button>
-                </div>
-                <p className="hint">Enter ERC-20 token address.</p>
-                {importTokenError ? <p className="inline-error">{importTokenError}</p> : null}
-              </div>
-            ) : null}
+            <TokenImportPanel
+              isOpen={isFundingImportOpen}
+              toggleLabel={isFundingImportOpen ? 'Hide import token' : 'Import token'}
+              addressInput={importTokenAddressInput}
+              isImporting={isImportingToken}
+              importError={importTokenError}
+              helperText="Enter ERC-20 token address."
+              onToggle={() => {
+                setIsFundingImportOpen((current) => !current);
+              }}
+              onAddressChange={setImportTokenAddressInput}
+              onImport={() => {
+                void importFundingToken();
+              }}
+            />
 
             <p className="hint">
               Send <strong>{selectedFundingToken.symbol}</strong> from <strong>{selectedFundingSourceChainName}</strong> to{' '}
               <strong>{selectedFundingDestinationChainName}</strong>.
             </p>
 
-            <div className="bridge-summary">
-              <p className="bridge-summary-tag">Balance</p>
-              <div>
-                <p className="summary-title">L1 Balance</p>
-                <p className="summary-value">
-                  {formatTokenAmount(selectedFundingSourceBalance, selectedFundingToken.decimals)} {selectedFundingToken.symbol}
-                </p>
-              </div>
-              <div>
-                <p className="summary-title">L1 Bridge Contract</p>
-                <p className="summary-value mono">
-                  {l1FundingConfig?.bridgeByDestinationChainId[fundingDestinationChain.id] &&
-                  l1FundingConfig?.chain.blockExplorers?.default?.url ? (
-                    <a
-                      href={`${l1FundingConfig.chain.blockExplorers.default.url.replace(/\/$/, '')}/address/${l1FundingConfig.bridgeByDestinationChainId[fundingDestinationChain.id]}`}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {l1FundingConfig.bridgeByDestinationChainId[fundingDestinationChain.id]}
-                    </a>
-                  ) : (
-                    l1FundingConfig?.bridgeByDestinationChainId[fundingDestinationChain.id] ?? 'Not configured'
-                  )}
-                </p>
-              </div>
-            </div>
+            <FlowBalanceSummary
+              rows={[
+                {
+                  title: 'L1 Balance',
+                  value: `${formatTokenAmount(selectedFundingSourceBalance, selectedFundingToken.decimals)} ${selectedFundingToken.symbol}`
+                },
+                {
+                  title: 'L1 Bridge Contract',
+                  mono: true,
+                  value:
+                    l1FundingConfig?.bridgeByDestinationChainId[fundingDestinationChain.id] &&
+                    l1FundingConfig?.chain.blockExplorers?.default?.url ? (
+                      <a
+                        href={`${l1FundingConfig.chain.blockExplorers.default.url.replace(/\/$/, '')}/address/${l1FundingConfig.bridgeByDestinationChainId[fundingDestinationChain.id]}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {l1FundingConfig.bridgeByDestinationChainId[fundingDestinationChain.id]}
+                      </a>
+                    ) : (
+                      l1FundingConfig?.bridgeByDestinationChainId[fundingDestinationChain.id] ?? 'Not configured'
+                    )
+                },
+                {
+                  title: 'Destination Rollup Balance',
+                  value: `${selectedFundingDestinationDisplayBalance} ${selectedFundingToken.symbol}`
+                }
+              ]}
+            />
 
             <button
               className={`btn btn-primary big ${isFundingSubmitting ? 'btn-loading' : ''}`}
@@ -670,6 +671,7 @@ function App() {
             ) : null}
             {l1NativeBalanceQuery.isLoading ? <p className="hint">Checking L1 balance...</p> : null}
             {l1TokenBalancesQuery.isLoading ? <p className="hint">Checking L1 token balances...</p> : null}
+            {destinationFundingBalanceQuery.isLoading ? <p className="hint">Checking destination rollup balance...</p> : null}
           </>
         ) : (
           <>
@@ -696,12 +698,24 @@ function App() {
               </label>
 
               <label className="field">
-                <span>Recipient</span>
-                <input className="readonly-input mono" value={walletAddress ?? 'Connect wallet first'} readOnly />
+                <span>Asset</span>
+                <Picker
+                  ariaLabel="Select return asset"
+                  open={openMenu === 'return-token'}
+                  valueLeft={selectedReturnToken.symbol}
+                  valueRight={selectedReturnTokenDisplayBalance}
+                  onToggle={() => setOpenMenu((prev) => (prev === 'return-token' ? null : 'return-token'))}
+                  onSelect={(value) => {
+                    setReturnTokenValue(value);
+                    setOpenMenu(null);
+                  }}
+                  options={returnTokenOptions}
+                  selectedValue={returnTokenValue}
+                />
               </label>
 
               <label className="field">
-                <span>ETH amount</span>
+                <span>{selectedReturnToken.symbol} amount</span>
                 <input
                   className="amount-input"
                   value={returnAmountInput}
@@ -710,42 +724,64 @@ function App() {
                   placeholder="0.01"
                 />
               </label>
+
+              <label className="field funding-recipient-field">
+                <span>Recipient</span>
+                <div className="readonly-input funding-recipient-display mono">{walletAddress ?? 'Connect wallet first'}</div>
+              </label>
             </div>
+
+            <TokenImportPanel
+              isOpen={isReturnImportOpen}
+              toggleLabel={isReturnImportOpen ? 'Hide import token' : 'Import token'}
+              addressInput={returnImportTokenAddressInput}
+              isImporting={isImportingReturnToken}
+              importError={returnImportTokenError}
+              helperText="Enter canonical L1 ERC-20 token address."
+              secondaryHelperText="The app derives the withdrawable L2 counterpart automatically when available."
+              onToggle={() => {
+                setIsReturnImportOpen((current) => !current);
+              }}
+              onAddressChange={setReturnImportTokenAddressInput}
+              onImport={() => {
+                void importReturnToken();
+              }}
+            />
 
             <p className="hint">
-              Return native ETH from <strong>{selectedReturnSourceChainName}</strong> to{' '}
+              Withdraw <strong>{selectedReturnToken.symbol}</strong> from <strong>{selectedReturnSourceChainName}</strong>{' '}
+              to{' '}
               <strong>{selectedReturnDestinationChainName}</strong>.
             </p>
-            <p className="hint">L2 initiation deducts immediately. L1 balance updates only after prove + finalize.</p>
-            <p className="hint">This submits the withdrawal on L2. Finalization on L1 is asynchronous.</p>
 
-            <div className="bridge-summary">
-              <p className="bridge-summary-tag">Balance</p>
-              <div>
-                <p className="summary-title">Source Rollup Balance</p>
-                <p className="summary-value">{formatTokenAmount(returnNativeBalance, 18)} ETH</p>
-              </div>
-              <div>
-                <p className="summary-title">L2 Bridge Contract</p>
-                <p className="summary-value mono">
-                  {resolvedL2BridgeAddress && returnSourceChain.blockExplorers?.default?.url ? (
-                    <a
-                      href={`${returnSourceChain.blockExplorers.default.url.replace(/\/$/, '')}/address/${resolvedL2BridgeAddress}`}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {resolvedL2BridgeAddress}
-                    </a>
-                  ) : (
-                    resolvedL2BridgeAddress ?? 'Resolving bridge counterpart...'
-                  )}
-                </p>
-              </div>
-              <div>
-                <p className="summary-title">L1 Balance</p>
-                <p className="summary-value">{formatTokenAmount(returnL1NativeBalance, 18)} ETH</p>
-              </div>
-            </div>
+            <FlowBalanceSummary
+              rows={[
+                {
+                  title: 'Source Rollup Balance',
+                  value: `${selectedReturnTokenDisplayBalance} ${selectedReturnToken.symbol}`
+                },
+                {
+                  title: 'L2 Bridge Contract',
+                  mono: true,
+                  value:
+                    resolvedL2BridgeAddress && returnSourceChain.blockExplorers?.default?.url ? (
+                      <a
+                        href={`${returnSourceChain.blockExplorers.default.url.replace(/\/$/, '')}/address/${resolvedL2BridgeAddress}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {resolvedL2BridgeAddress}
+                      </a>
+                    ) : (
+                      resolvedL2BridgeAddress ?? 'Resolving bridge counterpart...'
+                    )
+                },
+                {
+                  title: 'L1 Balance',
+                  value: `${selectedReturnDestinationDisplayBalance} ${selectedReturnToken.symbol}`
+                }
+              ]}
+            />
 
             <button
               className={`btn btn-primary big ${isReturnSubmitting ? 'btn-loading' : ''}`}
@@ -755,22 +791,23 @@ function App() {
                 void executeReturn();
               }}
             >
-              <span className="btn-label">{isReturnSubmitting ? 'Submitting rollup withdrawal...' : 'Bridge Back to L1'}</span>
+              <span className="btn-label">
+                {isReturnSubmitting ? 'Submitting rollup withdrawal...' : `Bridge ${selectedReturnToken.symbol} Back to L1`}
+              </span>
             </button>
             {isReturnSubmitting && returnPhase ? <p className="hint">{returnPhase}</p> : null}
 
-            {!isConnected ? <p className="hint">Connect a wallet to bridge native ETH back to L1.</p> : null}
-            {resolvedL2BridgeAddressQuery.isLoading ? <p className="hint">Resolving L2 bridge counterpart...</p> : null}
-            {resolvedL2BridgeAddressQuery.isError ? (
-              <p className="hint hint-warning">Could not resolve L2 bridge counterpart for selected rollup.</p>
+            {!isConnected ? <p className="hint">Connect a wallet to bridge assets back to L1.</p> : null}
+            {returnRouteQuery.isLoading ? <p className="hint">Resolving return route...</p> : null}
+            {returnRouteQuery.isError ? (
+              <p className="hint hint-warning">
+                Could not resolve return route for selected rollup. Check universal return-route configuration.
+              </p>
             ) : null}
-            {settlementContractsQuery.isLoading ? <p className="hint">Resolving L1 settlement contracts...</p> : null}
-            {settlementContractsQuery.isError ? (
-              <p className="hint hint-warning">Could not resolve L1 settlement contracts for selected rollup.</p>
-            ) : null}
-            {settlementContracts ? <p className="hint">L1 settlement contract resolved via dynamic bridge to messenger to portal.</p> : null}
-            {returnNativeBalanceQuery.isLoading ? <p className="hint">Checking source rollup balance...</p> : null}
-            {returnL1NativeBalanceQuery.isLoading ? <p className="hint">Checking L1 destination balance...</p> : null}
+            {settlementContracts ? <p className="hint">L1 settlement contracts resolved and ready for prove/finalize.</p> : null}
+            {returnNativeBalanceQuery.isLoading ? <p className="hint">Checking source rollup ETH balance...</p> : null}
+            {returnL1NativeBalanceQuery.isLoading ? <p className="hint">Checking L1 ETH balance...</p> : null}
+            {returnErc20AssetsQuery.isLoading ? <p className="hint">Resolving withdrawable ERC-20 return assets...</p> : null}
           </>
         )}
       </section>

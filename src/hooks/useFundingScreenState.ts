@@ -1,10 +1,15 @@
 import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { parseEther, parseUnits } from 'viem';
-import { chainA, chainB, composeConfig, demoTokens, l1FundingConfig, networkProfile, type DemoToken } from '../composeConfig';
+import { chainA, chainB, composeConfig, demoTokens, l1FundingConfig, type DemoToken } from '../composeConfig';
 import type { PickerOption } from '../components/Picker';
-import { readImportedTokens, resolveImportedTokenMetadata, upsertImportedToken } from '../lib/importedTokens';
+import { dedupeErc20TokensByAddress, getAssetValue, parsePositiveAssetAmountInput } from '../lib/assets';
 import { formatChainLabel, formatTokenAmount } from '../lib/format';
+import {
+  resolveCetFactoryAddressFromL2Bridge,
+  resolveL2BridgeAddressFromL1Bridge,
+  resolvePredictedCetAddress
+} from '../lib/l1Bridge';
+import { useCanonicalL1TokenImport } from './useCanonicalL1TokenImport';
 import { useL1FundingExecution } from './useL1FundingExecution';
 
 // Funding-mode state aggregator: destination selection, source balances, and submission state.
@@ -28,23 +33,6 @@ const erc20BalanceOfAbi = [
   }
 ] as const;
 
-const getFundingTokenValue = (token: DemoToken) => `${token.kind}:${token.address.toLowerCase()}`;
-
-/**
- * Parses funding input with token decimals and rejects non-positive values.
- */
-const parseFundingAmountInput = ({ amountInput, token }: { amountInput: string; token: DemoToken }): bigint | undefined => {
-  const trimmedAmountInput = amountInput.trim();
-  if (!trimmedAmountInput) return undefined;
-
-  try {
-    const amountWei = token.kind === 'nativeEthViaWeth' ? parseEther(trimmedAmountInput) : parseUnits(trimmedAmountInput, token.decimals);
-    return amountWei > 0n ? amountWei : undefined;
-  } catch {
-    return undefined;
-  }
-};
-
 /**
  * Prepares all state needed by the L1 -> rollup funding UI.
  */
@@ -60,15 +48,11 @@ export function useFundingScreenState({
   const [fundingTokenValue, setFundingTokenValue] = useState<string>(() => {
     const defaultNative = demoTokens.find((token) => token.kind === 'nativeEthViaWeth');
     return defaultNative
-      ? getFundingTokenValue(defaultNative)
+      ? getAssetValue(defaultNative)
       : demoTokens[0]
-        ? getFundingTokenValue(demoTokens[0])
+        ? getAssetValue(demoTokens[0])
         : `nativeEthViaWeth:${ZERO_ADDRESS}`;
   });
-  const [importTokenAddressInput, setImportTokenAddressInput] = useState('');
-  const [importTokenError, setImportTokenError] = useState<string | null>(null);
-  const [isImportingToken, setIsImportingToken] = useState(false);
-  const [importedTokens, setImportedTokens] = useState<DemoToken[]>([]);
 
   const fundingDestinationChain = fundingDestinationChainId === chainA.id ? chainA : chainB;
   const selectedFundingSourceChainLabel = l1FundingConfig
@@ -94,47 +78,32 @@ export function useFundingScreenState({
 
   const curatedErc20FundingTokens = demoTokens.filter((token) => token.kind === 'erc20');
 
-  useEffect(() => {
-    if (!walletAddress || !l1FundingConfig) {
-      setImportedTokens([]);
-      return;
-    }
-
-    // Imported tokens are stored per wallet + network + L1 chain.
-    const stored = readImportedTokens({
-      networkMode: networkProfile.mode,
-      chainId: l1FundingConfig.chain.id,
-      walletAddress
-    }).map((token) => ({
-      ...token,
-      kind: 'erc20' as const
-    }));
-
-    setImportedTokens(stored);
-  }, [walletAddress]);
+  const {
+    importedTokens,
+    importTokenAddressInput,
+    importTokenError,
+    isImportingToken,
+    setImportTokenAddressInput,
+    importCanonicalL1Token
+  } = useCanonicalL1TokenImport({
+    walletAddress,
+    l1FundingConfig
+  });
 
   const fundingTokens = useMemo(() => {
-    const erc20ByAddress = new Map<string, DemoToken>();
+    const dedupedErc20Tokens = dedupeErc20TokensByAddress([...curatedErc20FundingTokens, ...importedTokens]);
 
-    for (const token of curatedErc20FundingTokens) {
-      erc20ByAddress.set(token.address.toLowerCase(), token);
-    }
-
-    for (const token of importedTokens) {
-      erc20ByAddress.set(token.address.toLowerCase(), token);
-    }
-
-    return [nativeFundingToken, ...erc20ByAddress.values()] as const;
+    return [nativeFundingToken, ...dedupedErc20Tokens] as const;
   }, [curatedErc20FundingTokens, importedTokens, nativeFundingToken]);
 
   useEffect(() => {
     if (fundingTokens.length === 0) return;
-    if (fundingTokens.some((token) => getFundingTokenValue(token) === fundingTokenValue)) return;
-    setFundingTokenValue(getFundingTokenValue(fundingTokens[0]));
+    if (fundingTokens.some((token) => getAssetValue(token) === fundingTokenValue)) return;
+    setFundingTokenValue(getAssetValue(fundingTokens[0]));
   }, [fundingTokenValue, fundingTokens]);
 
   const selectedFundingToken = useMemo(
-    () => fundingTokens.find((token) => getFundingTokenValue(token) === fundingTokenValue) ?? fundingTokens[0],
+    () => fundingTokens.find((token) => getAssetValue(token) === fundingTokenValue) ?? fundingTokens[0],
     [fundingTokenValue, fundingTokens]
   );
 
@@ -208,62 +177,81 @@ export function useFundingScreenState({
   const l1NativeBalance = l1NativeBalanceQuery.data;
   const l1TokenBalances = l1TokenBalancesQuery.data;
 
+  const destinationFundingBalanceQuery = useQuery({
+    queryKey: [
+      'l2-funding-destination-balance',
+      fundingDestinationChain.id,
+      walletAddress,
+      l1FundingConfig?.chain.id,
+      selectedFundingToken.kind,
+      selectedFundingToken.address
+    ],
+    enabled: Boolean(l1FundingConfig?.chain && walletAddress),
+    queryFn: async () => {
+      const l1Chain = l1FundingConfig?.chain;
+      const eoaAddress = walletAddress;
+
+      if (!l1Chain || !eoaAddress) {
+        throw new Error('Destination balance context is not ready yet.');
+      }
+
+      const destinationPublicClient = composeConfig.getPublicClient(fundingDestinationChain.id);
+      if (!destinationPublicClient) {
+        throw new Error(`Destination rollup public client is not configured for chain ${fundingDestinationChain.id}.`);
+      }
+
+      if (selectedFundingToken.kind === 'nativeEthViaWeth') {
+        return destinationPublicClient.getBalance({ address: eoaAddress });
+      }
+
+      const l1BridgeAddress = l1FundingConfig?.bridgeByDestinationChainId[fundingDestinationChain.id];
+      if (!l1BridgeAddress) {
+        throw new Error(`L1 bridge contract is not configured for destination chain ${fundingDestinationChain.id}.`);
+      }
+
+      const l1PublicClient = composeConfig.getPublicClient(l1Chain.id);
+      if (!l1PublicClient) {
+        throw new Error(`L1 public client is not configured for chain ${l1Chain.id}.`);
+      }
+
+      const destinationL2BridgeAddress = await resolveL2BridgeAddressFromL1Bridge({
+        l1PublicClient,
+        l1BridgeAddress
+      });
+      const destinationCetFactoryAddress = await resolveCetFactoryAddressFromL2Bridge({
+        l2PublicClient: destinationPublicClient,
+        l2BridgeAddress: destinationL2BridgeAddress
+      });
+      const predictedCetAddress = await resolvePredictedCetAddress({
+        l2PublicClient: destinationPublicClient,
+        cetFactoryAddress: destinationCetFactoryAddress,
+        remoteAsset: selectedFundingToken.address,
+        remoteChainId: l1Chain.id
+      });
+
+      return destinationPublicClient.readContract({
+        address: predictedCetAddress,
+        abi: erc20BalanceOfAbi,
+        functionName: 'balanceOf',
+        args: [eoaAddress]
+      });
+    }
+  });
+
   const selectedFundingSourceBalance = selectedFundingToken
     ? selectedFundingToken.kind === 'nativeEthViaWeth'
       ? l1NativeBalance
       : l1TokenBalances?.[selectedFundingToken.address.toLowerCase()]
     : undefined;
+  const selectedFundingDestinationBalance = destinationFundingBalanceQuery.data;
 
   const importFundingToken = useCallback(async () => {
-    if (!walletAddress || !l1FundingConfig) {
-      setImportTokenError('Connect a wallet and configure L1 funding before importing tokens.');
-      return;
-    }
+    const importedToken = await importCanonicalL1Token();
+    if (!importedToken) return;
 
-    const candidateAddress = importTokenAddressInput.trim();
-    if (!candidateAddress) {
-      setImportTokenError('Enter a token address to import.');
-      return;
-    }
-
-    const l1PublicClient = composeConfig.getPublicClient(l1FundingConfig.chain.id);
-    if (!l1PublicClient) {
-      setImportTokenError(`L1 public client is not configured for chain ${l1FundingConfig.chain.id}.`);
-      return;
-    }
-
-    try {
-      setIsImportingToken(true);
-      setImportTokenError(null);
-
-      const token = await resolveImportedTokenMetadata({
-        publicClient: l1PublicClient,
-        tokenAddress: candidateAddress
-      });
-
-      const nextImported = upsertImportedToken({
-        networkMode: networkProfile.mode,
-        chainId: l1FundingConfig.chain.id,
-        walletAddress,
-        token
-      }).map((item) => ({ ...item, kind: 'erc20' as const }));
-
-      setImportedTokens(nextImported);
-      const importedToken: DemoToken = {
-        ...token,
-        kind: 'erc20'
-      };
-
-      setFundingTokenValue(getFundingTokenValue(importedToken));
-      setImportTokenAddressInput('');
-      void l1TokenBalancesQuery.refetch();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not import token from address.';
-      setImportTokenError(message);
-    } finally {
-      setIsImportingToken(false);
-    }
-  }, [importTokenAddressInput, l1TokenBalancesQuery, walletAddress]);
+    setFundingTokenValue(getAssetValue(importedToken));
+    void l1TokenBalancesQuery.refetch();
+  }, [importCanonicalL1Token, l1TokenBalancesQuery]);
 
   const {
     executeFunding,
@@ -284,11 +272,17 @@ export function useFundingScreenState({
     onFundingSuccess: () => {
       void l1NativeBalanceQuery.refetch();
       void l1TokenBalancesQuery.refetch();
+      void destinationFundingBalanceQuery.refetch();
     }
   });
 
   const parsedFundingAmountWei = useMemo(
-    () => parseFundingAmountInput({ amountInput: fundingAmountInput, token: selectedFundingToken }),
+    () =>
+      parsePositiveAssetAmountInput({
+        amountInput: fundingAmountInput,
+        tokenKind: selectedFundingToken.kind,
+        tokenDecimals: selectedFundingToken.decimals
+      }),
     [fundingAmountInput, selectedFundingToken]
   );
 
@@ -336,8 +330,8 @@ export function useFundingScreenState({
     ];
 
     return sorted.map(({ token, balance }) => ({
-      key: `fund-token-${getFundingTokenValue(token)}`,
-      value: getFundingTokenValue(token),
+      key: `fund-token-${getAssetValue(token)}`,
+      value: getAssetValue(token),
       left: token.symbol,
       right: formatTokenAmount(balance, token.decimals)
     }));
@@ -345,6 +339,10 @@ export function useFundingScreenState({
 
   const selectedFundingTokenDisplayBalance = formatTokenAmount(
     selectedFundingSourceBalance,
+    selectedFundingToken.decimals
+  );
+  const selectedFundingDestinationDisplayBalance = formatTokenAmount(
+    selectedFundingDestinationBalance,
     selectedFundingToken.decimals
   );
 
@@ -359,7 +357,9 @@ export function useFundingScreenState({
     fundingTokenValue,
     selectedFundingToken,
     selectedFundingSourceBalance,
+    selectedFundingDestinationBalance,
     selectedFundingTokenDisplayBalance,
+    selectedFundingDestinationDisplayBalance,
     selectedFundingSourceChainLabel,
     selectedFundingDestinationChainLabel,
     selectedFundingSourceChainName,
@@ -369,6 +369,7 @@ export function useFundingScreenState({
     l1NativeBalance,
     l1NativeBalanceQuery,
     l1TokenBalancesQuery,
+    destinationFundingBalanceQuery,
     executeFunding,
     isFundingSubmitting,
     fundingPhase,

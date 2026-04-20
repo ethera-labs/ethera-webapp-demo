@@ -1,4 +1,4 @@
-import { formatEther } from 'viem';
+import { formatUnits } from 'viem';
 import type { ReturnResult, WithdrawalLifecycleStatus } from '../types/funding';
 import { useWithdrawalLifecycle } from '../hooks/useWithdrawalLifecycle';
 import { TransactionHistorySection } from './transactionOutput.shared';
@@ -115,7 +115,7 @@ const ReturnCard = ({
         </div>
         <div className="tx-item">
           <span className="tx-label">Amount</span>
-          <span className="mono tx-hash">{formatEther(result.amountWei)} ETH</span>
+          <span className="mono tx-hash">{formatUnits(result.amountWei, result.tokenDecimals)} {result.tokenSymbol}</span>
         </div>
         <div className="tx-item">
           <span className="tx-label">Recipient</span>

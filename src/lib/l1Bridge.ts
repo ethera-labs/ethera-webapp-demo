@@ -37,7 +37,7 @@ export const standardBridgeErc20Abi = [
 ] as const;
 
 export const l1StandardBridgeAbi = [...standardBridgeEthAbi, ...standardBridgeErc20Abi] as const;
-export const l2StandardBridgeAbi = standardBridgeEthAbi;
+export const l2StandardBridgeAbi = [...standardBridgeEthAbi, ...standardBridgeErc20Abi] as const;
 
 export const standardBridgeCounterpartAbi = [
   {

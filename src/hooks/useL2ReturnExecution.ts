@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { parseEther, type Chain } from 'viem';
+import { erc20Abi, type Chain } from 'viem';
 import {
   buildProveWithdrawal,
   finalizeWithdrawal,
@@ -7,11 +7,17 @@ import {
   proveWithdrawal
 } from 'viem/op-stack';
 import { composeConfig, type L1FundingConfig } from '../composeConfig';
+import { parsePositiveAssetAmountInput } from '../lib/assets';
 import { getComposeWithdrawalStatus } from '../lib/composeSettlement';
 import { normalizeExecutionErrorMessage } from '../lib/errors';
 import { formatChainLabel } from '../lib/format';
 import { l2StandardBridgeAbi } from '../lib/l1Bridge';
-import type { ReturnResult, ReturnSettlementContracts, WithdrawalLifecycleStatus } from '../types/funding';
+import type {
+  ReturnExecutionAsset,
+  ReturnResult,
+  ReturnSettlementContracts,
+  WithdrawalLifecycleStatus
+} from '../types/funding';
 
 // Handles rollup -> L1 withdrawal initiation and settlement lifecycle.
 type WalletClientLike = {
@@ -21,6 +27,7 @@ type WalletClientLike = {
 
 type UseL2ReturnExecutionParams = {
   amountInput: string;
+  selectedAsset: ReturnExecutionAsset;
   walletAddress: `0x${string}` | undefined;
   sourceChain: Chain;
   l1FundingConfig: L1FundingConfig | undefined;
@@ -35,11 +42,49 @@ type UseL2ReturnExecutionParams = {
 
 const MAX_RETURN_HISTORY = 12;
 
+type ReturnResultContext = Omit<
+  ReturnResult,
+  'status' | 'lifecycleStatus' | 'proveTxHash' | 'proveTxExplorerUrl' | 'finalizeTxHash' | 'finalizeTxExplorerUrl'
+>;
+
 /**
- * Executes L2 -> L1 native ETH return and L1 prove/finalize settlement actions.
+ * Builds a return result from shared context plus lifecycle status fields.
+ */
+const buildReturnResult = ({
+  context,
+  status,
+  lifecycleStatus
+}: {
+  context: ReturnResultContext;
+  status: ReturnResult['status'];
+  lifecycleStatus: ReturnResult['lifecycleStatus'];
+}): ReturnResult => ({
+  ...context,
+  status,
+  lifecycleStatus
+});
+
+const returnResultToContext = (result: ReturnResult): ReturnResultContext => ({
+  hash: result.hash,
+  explorerUrl: result.explorerUrl,
+  sourceChainLabel: result.sourceChainLabel,
+  destinationChainLabel: result.destinationChainLabel,
+  sourceChainId: result.sourceChainId,
+  destinationChainId: result.destinationChainId,
+  recipient: result.recipient,
+  amountWei: result.amountWei,
+  tokenSymbol: result.tokenSymbol,
+  tokenDecimals: result.tokenDecimals,
+  settlementContracts: result.settlementContracts,
+  sessionId: result.sessionId
+});
+
+/**
+ * Executes L2 -> L1 return initiation and L1 prove/finalize settlement actions.
  */
 export function useL2ReturnExecution({
   amountInput,
+  selectedAsset,
   walletAddress,
   sourceChain,
   l1FundingConfig,
@@ -173,25 +218,23 @@ export function useL2ReturnExecution({
     }
 
     if (!amountInput.trim()) {
-      onReturnError('Enter an ETH amount.');
+      onReturnError(`Enter a ${selectedAsset.symbol} amount.`);
       return;
     }
 
-    let amountWei: bigint;
-    try {
-      amountWei = parseEther(amountInput);
-    } catch {
-      onReturnError('Invalid ETH amount.');
-      return;
-    }
+    const amountWei = parsePositiveAssetAmountInput({
+      amountInput,
+      tokenKind: selectedAsset.kind,
+      tokenDecimals: selectedAsset.decimals
+    });
 
-    if (amountWei <= 0n) {
-      onReturnError('Amount must be greater than zero.');
+    if (amountWei === undefined) {
+      onReturnError(`Invalid ${selectedAsset.symbol} amount.`);
       return;
     }
 
     if (availableSourceBalance !== undefined && amountWei > availableSourceBalance) {
-      onReturnError('Amount exceeds available ETH balance on the selected rollup.');
+      onReturnError(`Amount exceeds available ${selectedAsset.symbol} balance on the selected rollup.`);
       return;
     }
 
@@ -201,6 +244,26 @@ export function useL2ReturnExecution({
 
     let submittedHash: `0x${string}` | null = null;
     let explorerUrl = '';
+
+    const buildResultContext = (): ReturnResultContext => ({
+      hash: submittedHash!,
+      explorerUrl,
+      sourceChainLabel,
+      destinationChainLabel,
+      sourceChainId: sourceChain.id,
+      destinationChainId: l1FundingConfig.chain.id,
+      recipient: walletAddress,
+      amountWei,
+      tokenSymbol: selectedAsset.symbol,
+      tokenDecimals: selectedAsset.decimals,
+      settlementContracts,
+      sessionId
+    });
+
+    const resolveResultContext = (existing?: ReturnResult): ReturnResultContext => ({
+      ...(existing ? returnResultToContext(existing) : {}),
+      ...buildResultContext()
+    });
 
     try {
       setIsSubmitting(true);
@@ -212,62 +275,79 @@ export function useL2ReturnExecution({
         throw new Error(`Wallet chain mismatch after switch. Active: ${activeChainId}, expected: ${sourceChain.id}.`);
       }
 
-      setPhase('Submitting rollup withdrawal transaction...');
-      submittedHash = await walletClient.writeContract({
-        address: sourceL2BridgeAddress,
-        abi: l2StandardBridgeAbi,
-        functionName: 'bridgeETHTo',
-        args: [walletAddress, l1FundingConfig.minGasLimit, '0x'],
-        value: amountWei
-      });
-
-      const explorerBaseUrl = sourceChain.blockExplorers?.default?.url;
-      explorerUrl = explorerBaseUrl ? new URL(`tx/${submittedHash}`, explorerBaseUrl).toString() : '';
-
-      upsertResult(sessionId, () => ({
-        hash: submittedHash!,
-        explorerUrl,
-        sourceChainLabel,
-        destinationChainLabel,
-        sourceChainId: sourceChain.id,
-        destinationChainId: l1FundingConfig.chain.id,
-        recipient: walletAddress,
-        amountWei,
-        tokenSymbol: 'ETH',
-        tokenDecimals: 18,
-        status: 'pending',
-        lifecycleStatus: 'waiting-to-prove',
-        settlementContracts,
-        sessionId
-      }));
-
       const sourcePublicClient = composeConfig.getPublicClient(sourceChain.id);
       if (!sourcePublicClient) {
         throw new Error(`Could not resolve source rollup public client for chain ${sourceChain.id}.`);
       }
 
+      if (selectedAsset.kind === 'nativeEthViaWeth') {
+        setPhase('Submitting rollup ETH withdrawal transaction...');
+        submittedHash = await walletClient.writeContract({
+          address: sourceL2BridgeAddress,
+          abi: l2StandardBridgeAbi,
+          functionName: 'bridgeETHTo',
+          args: [walletAddress, l1FundingConfig.minGasLimit, '0x'],
+          value: amountWei
+        });
+      } else {
+        setPhase(`Checking ${selectedAsset.symbol} allowance...`);
+        const allowance = await sourcePublicClient.readContract({
+          address: selectedAsset.l2TokenAddress,
+          abi: erc20Abi,
+          functionName: 'allowance',
+          args: [walletAddress, sourceL2BridgeAddress]
+        });
+
+        if (allowance < amountWei) {
+          setPhase(`Approving ${selectedAsset.symbol} for withdrawal bridge...`);
+          const approvalHash = await walletClient.writeContract({
+            address: selectedAsset.l2TokenAddress,
+            abi: erc20Abi,
+            functionName: 'approve',
+            args: [sourceL2BridgeAddress, amountWei]
+          });
+
+          await sourcePublicClient.waitForTransactionReceipt({ hash: approvalHash });
+        }
+
+        setPhase(`Submitting rollup ${selectedAsset.symbol} withdrawal transaction...`);
+        submittedHash = await walletClient.writeContract({
+          address: sourceL2BridgeAddress,
+          abi: l2StandardBridgeAbi,
+          functionName: 'bridgeERC20To',
+          args: [
+            selectedAsset.l2TokenAddress,
+            selectedAsset.l1TokenAddress,
+            walletAddress,
+            amountWei,
+            l1FundingConfig.minGasLimit,
+            '0x'
+          ]
+        });
+      }
+
+      const explorerBaseUrl = sourceChain.blockExplorers?.default?.url;
+      explorerUrl = explorerBaseUrl ? new URL(`tx/${submittedHash}`, explorerBaseUrl).toString() : '';
+
+      upsertResult(sessionId, () =>
+        buildReturnResult({
+          context: resolveResultContext(),
+          status: 'pending',
+          lifecycleStatus: 'waiting-to-prove'
+        })
+      );
+
       setPhase('Waiting for rollup confirmation...');
       const receipt = await sourcePublicClient.waitForTransactionReceipt({ hash: submittedHash });
       const status = receipt.status === 'success' ? 'success' : 'failed';
 
-      upsertResult(sessionId, (existing) => ({
-        ...(existing ?? {
-          hash: submittedHash!,
-          explorerUrl,
-          sourceChainLabel,
-          destinationChainLabel,
-          sourceChainId: sourceChain.id,
-          destinationChainId: l1FundingConfig.chain.id,
-          recipient: walletAddress,
-          amountWei,
-          tokenSymbol: 'ETH',
-          tokenDecimals: 18,
-          lifecycleStatus: 'waiting-to-prove',
-          settlementContracts,
-          sessionId
-        }),
-        status
-      }));
+      upsertResult(sessionId, (existing) =>
+        buildReturnResult({
+          context: resolveResultContext(existing),
+          status,
+          lifecycleStatus: existing?.lifecycleStatus ?? 'waiting-to-prove'
+        })
+      );
 
       if (status === 'failed') {
         onReturnError('Rollup withdrawal transaction reverted. Please retry.');
@@ -280,24 +360,13 @@ export function useL2ReturnExecution({
       const normalizedMessage = normalizeExecutionErrorMessage(rawMessage);
 
       if (submittedHash) {
-        upsertResult(sessionId, (existing) => ({
-          ...(existing ?? {
-            hash: submittedHash!,
-            explorerUrl,
-            sourceChainLabel,
-            destinationChainLabel,
-            sourceChainId: sourceChain.id,
-            destinationChainId: l1FundingConfig.chain.id,
-            recipient: walletAddress,
-            amountWei,
-            tokenSymbol: 'ETH',
-            tokenDecimals: 18,
-            lifecycleStatus: 'waiting-to-prove',
-            settlementContracts,
-            sessionId
-          }),
-          status: 'failed'
-        }));
+        upsertResult(sessionId, (existing) =>
+          buildReturnResult({
+            context: resolveResultContext(existing),
+            status: 'failed',
+            lifecycleStatus: existing?.lifecycleStatus ?? 'waiting-to-prove'
+          })
+        );
       }
 
       onReturnError(normalizedMessage);
@@ -314,6 +383,7 @@ export function useL2ReturnExecution({
     onClearErrors,
     onReturnError,
     onReturnSuccess,
+    selectedAsset,
     settlementContracts,
     sourceChain,
     sourceL2BridgeAddress,

@@ -28,10 +28,24 @@ export type WithdrawalLifecycleStatus =
   | 'finalized';
 
 export type ReturnSettlementContracts = {
-  l1MessengerAddress: `0x${string}`;
+  l1MessengerAddress?: `0x${string}`;
   l1PortalAddress: `0x${string}`;
   l1DisputeGameFactoryAddress: `0x${string}`;
 };
+
+export type ReturnExecutionAsset =
+  | {
+      kind: 'nativeEthViaWeth';
+      symbol: string;
+      decimals: number;
+    }
+  | {
+      kind: 'erc20';
+      symbol: string;
+      decimals: number;
+      l2TokenAddress: `0x${string}`;
+      l1TokenAddress: `0x${string}`;
+    };
 
 export type ReturnResult = FundingResult & {
   sourceChainId: number;
