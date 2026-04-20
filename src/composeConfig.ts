@@ -20,3 +20,4 @@ export const composeConfig = createComposeRuntimeConfig({
 
 export const bridgeAddress = networkProfile.bridgeAddress;
 export const demoTokens = networkProfile.tokens;
+export const universalContracts = networkProfile.universal;

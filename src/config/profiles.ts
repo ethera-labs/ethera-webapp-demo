@@ -196,6 +196,8 @@ export const createTestnetProfile = (): NetworkProfile => {
 
   const l1ToRollupABridge = getEnv('VITE_TESTNET_L1_TO_ROLLUP_A_BRIDGE');
   const l1ToRollupBBridge = getEnv('VITE_TESTNET_L1_TO_ROLLUP_B_BRIDGE');
+  const rollupAComposePortal = resolveOptionalAddressEnv('VITE_TESTNET_ROLLUP_A_COMPOSE_PORTAL');
+  const rollupBComposePortal = resolveOptionalAddressEnv('VITE_TESTNET_ROLLUP_B_COMPOSE_PORTAL');
   const hasAnyL1BridgeConfig = Boolean(l1ToRollupABridge || l1ToRollupBBridge);
 
   if (hasAnyL1BridgeConfig && (!l1ToRollupABridge || !l1ToRollupBBridge)) {
@@ -212,9 +214,57 @@ export const createTestnetProfile = (): NetworkProfile => {
           [chainAResolved.id]: toAddress(l1ToRollupABridge!, 'VITE_TESTNET_L1_TO_ROLLUP_A_BRIDGE'),
           [chainBResolved.id]: toAddress(l1ToRollupBBridge!, 'VITE_TESTNET_L1_TO_ROLLUP_B_BRIDGE')
         },
+        ...(rollupAComposePortal && rollupBComposePortal
+          ? {
+              composePortalBySourceChainId: {
+                [chainAResolved.id]: rollupAComposePortal,
+                [chainBResolved.id]: rollupBComposePortal
+              }
+            }
+          : {}),
         minGasLimit: getOptionalPositiveIntEnv('VITE_TESTNET_L1_BRIDGE_MIN_GAS_LIMIT') ?? 200_000
       }
     : undefined;
+
+  const universalL2ToL2Bridge = resolveOptionalAddressEnv('VITE_TESTNET_UNIVERSAL_L2_TO_L2_BRIDGE');
+  const universalMailbox = resolveOptionalAddressEnv('VITE_TESTNET_UNIVERSAL_MAILBOX');
+  const universalCetFactory = resolveOptionalAddressEnv('VITE_TESTNET_UNIVERSAL_CET_FACTORY');
+  const universalEthLiquidity = resolveOptionalAddressEnv('VITE_TESTNET_UNIVERSAL_ETH_LIQUIDITY');
+  const rollupAComposeL2Bridge = resolveOptionalAddressEnv('VITE_TESTNET_ROLLUP_A_COMPOSE_L2_BRIDGE');
+  const rollupBComposeL2Bridge = resolveOptionalAddressEnv('VITE_TESTNET_ROLLUP_B_COMPOSE_L2_BRIDGE');
+
+  const universalContracts =
+    universalL2ToL2Bridge ||
+    universalMailbox ||
+    universalCetFactory ||
+    universalEthLiquidity ||
+    rollupAComposeL2Bridge ||
+    rollupBComposeL2Bridge ||
+    rollupAComposePortal ||
+    rollupBComposePortal
+      ? {
+          ...(universalL2ToL2Bridge ? { l2ToL2Bridge: universalL2ToL2Bridge } : {}),
+          ...(universalMailbox ? { mailbox: universalMailbox } : {}),
+          ...(universalCetFactory ? { cetFactory: universalCetFactory } : {}),
+          ...(universalEthLiquidity ? { ethLiquidity: universalEthLiquidity } : {}),
+          ...(rollupAComposeL2Bridge && rollupBComposeL2Bridge
+            ? {
+                l2BridgeByChainId: {
+                  [chainAResolved.id]: rollupAComposeL2Bridge,
+                  [chainBResolved.id]: rollupBComposeL2Bridge
+                }
+              }
+            : {}),
+          ...(rollupAComposePortal && rollupBComposePortal
+            ? {
+                composePortalByChainId: {
+                  [chainAResolved.id]: rollupAComposePortal,
+                  [chainBResolved.id]: rollupBComposePortal
+                }
+              }
+            : {})
+        }
+      : undefined;
 
   const singleToken = resolveSingleToken({
     addressKey: 'VITE_TESTNET_TOKEN_ADDRESS',
@@ -258,7 +308,8 @@ export const createTestnetProfile = (): NetworkProfile => {
     },
     tokens: resolveTestnetTokens(singleToken),
     paymasterByChainId,
-    l1Funding
+    l1Funding,
+    universal: universalContracts
   };
 };
 
