@@ -3,10 +3,17 @@ export type FundingReceiptStatus = 'pending' | 'success' | 'failed';
 export type FundingResult = {
   hash: `0x${string}`;
   explorerUrl: string;
+  destinationTxHash?: `0x${string}`;
+  destinationTxExplorerUrl?: string;
+  destinationTxStatus?: FundingReceiptStatus;
+  destinationTokenAddress?: `0x${string}`;
+  destinationTokenExplorerUrl?: string;
   sourceChainLabel: string;
   destinationChainLabel: string;
   recipient: `0x${string}`;
   amountWei: bigint;
+  tokenSymbol: string;
+  tokenDecimals: number;
   status: FundingReceiptStatus;
   sessionId: bigint;
 };

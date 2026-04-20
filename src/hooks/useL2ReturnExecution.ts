@@ -233,6 +233,8 @@ export function useL2ReturnExecution({
         destinationChainId: l1FundingConfig.chain.id,
         recipient: walletAddress,
         amountWei,
+        tokenSymbol: 'ETH',
+        tokenDecimals: 18,
         status: 'pending',
         lifecycleStatus: 'waiting-to-prove',
         settlementContracts,
@@ -258,6 +260,8 @@ export function useL2ReturnExecution({
           destinationChainId: l1FundingConfig.chain.id,
           recipient: walletAddress,
           amountWei,
+          tokenSymbol: 'ETH',
+          tokenDecimals: 18,
           lifecycleStatus: 'waiting-to-prove',
           settlementContracts,
           sessionId
@@ -286,6 +290,8 @@ export function useL2ReturnExecution({
             destinationChainId: l1FundingConfig.chain.id,
             recipient: walletAddress,
             amountWei,
+            tokenSymbol: 'ETH',
+            tokenDecimals: 18,
             lifecycleStatus: 'waiting-to-prove',
             settlementContracts,
             sessionId

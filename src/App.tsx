@@ -24,8 +24,9 @@ const BASE_SUPPORTED_CHAIN_IDS = [chainA.id, chainB.id] as const;
  * Main demo surface for wallet connect, cross-rollup bridge, and L1 funding modes.
  */
 function App() {
-  const [flowMode, setFlowMode] = useState<FlowMode>('bridge');
+  const [flowMode, setFlowMode] = useState<FlowMode>('fund');
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
+  const [isFundingImportOpen, setIsFundingImportOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
   const dropdownAreaRef = useRef<HTMLDivElement | null>(null);
@@ -127,21 +128,32 @@ function App() {
     fundingDestinationChainId,
     fundingAmountInput,
     fundingDestinationChain,
+    fundingTokenValue,
+    selectedFundingToken,
+    selectedFundingSourceBalance,
+    selectedFundingTokenDisplayBalance,
     selectedFundingSourceChainLabel,
     selectedFundingDestinationChainLabel,
     selectedFundingSourceChainName,
     selectedFundingDestinationChainName,
     fundingDestinationOptions,
-    l1NativeBalance,
+    fundingTokenOptions,
     l1NativeBalanceQuery,
+    l1TokenBalancesQuery,
     executeFunding,
     isFundingSubmitting,
     fundingPhase,
     clearFundingPhase,
     fundingResults,
     canSubmitFunding,
+    importTokenAddressInput,
+    importTokenError,
+    isImportingToken,
     setFundingDestinationChainId,
     setFundingAmountInput,
+    setFundingTokenValue,
+    setImportTokenAddressInput,
+    importFundingToken,
     resetFundingForm
   } = useFundingScreenState({
     walletAddress,
@@ -221,6 +233,7 @@ function App() {
       setError(null);
       setSuccessNotice(null);
       setOpenMenu(null);
+      setIsFundingImportOpen(false);
       closeDepositModal(clearBridgePhase);
       clearFundingPhase();
       clearReturnPhase();
@@ -232,6 +245,7 @@ function App() {
     setError(null);
     setSuccessNotice(null);
     setOpenMenu(null);
+    setIsFundingImportOpen(false);
     closeDepositModal(clearBridgePhase);
     clearFundingPhase();
     clearReturnPhase();
@@ -251,6 +265,7 @@ function App() {
   ]);
 
   const activeFlowMode: FlowMode = l1FundingConfig ? flowMode : 'bridge';
+  const isBridgeFlowEnabled = false;
 
   if (!selectedToken) {
     return (
@@ -363,6 +378,7 @@ function App() {
               role="tab"
               aria-selected={activeFlowMode === 'bridge'}
               className={`flow-toggle-btn ${activeFlowMode === 'bridge' ? 'flow-toggle-btn-active' : ''}`}
+              disabled={!isBridgeFlowEnabled}
               onClick={() => handleFlowModeChange('bridge')}
             >
               Rollup Bridge
@@ -389,7 +405,8 @@ function App() {
         ) : null}
 
         {activeFlowMode === 'bridge' ? (
-          <>
+          isBridgeFlowEnabled ? (
+            <>
             <div className="grid" ref={dropdownAreaRef}>
               <label className="field">
                 <span>Source</span>
@@ -495,7 +512,14 @@ function App() {
             {networkProfile.paymasterByChainId ? <p className="hint hint-success">Paymaster enabled</p> : null}
             {accountsLoading ? <p className="hint">Creating smart accounts on both chains...</p> : null}
             {sourceBalancesLoading ? <p className="hint">Checking source balances...</p> : null}
-          </>
+            </>
+          ) : (
+            <>
+              <p className="hint hint-warning">
+                Universal L2 to L2 migration is in progress. Rollup bridge execution is temporarily disabled.
+              </p>
+            </>
+          )
         ) : activeFlowMode === 'fund' ? (
           <>
             <div className="grid" ref={dropdownAreaRef}>
@@ -521,12 +545,24 @@ function App() {
               </label>
 
               <label className="field">
-                <span>Recipient</span>
-                <input className="readonly-input mono" value={walletAddress ?? 'Connect wallet first'} readOnly />
+                <span>Asset</span>
+                <Picker
+                  ariaLabel="Select L1 funding token"
+                  open={openMenu === 'token'}
+                  valueLeft={selectedFundingToken.symbol}
+                  valueRight={selectedFundingTokenDisplayBalance}
+                  onToggle={() => setOpenMenu((prev) => (prev === 'token' ? null : 'token'))}
+                  onSelect={(value) => {
+                    setFundingTokenValue(value);
+                    setOpenMenu(null);
+                  }}
+                  options={fundingTokenOptions}
+                  selectedValue={fundingTokenValue}
+                />
               </label>
 
               <label className="field">
-                <span>ETH amount</span>
+                <span>{selectedFundingToken.symbol} amount</span>
                 <input
                   className="amount-input"
                   value={fundingAmountInput}
@@ -535,17 +571,67 @@ function App() {
                   placeholder="0.01"
                 />
               </label>
+
+              <label className="field funding-recipient-field">
+                <span>Recipient</span>
+                <div className="readonly-input funding-recipient-display mono">{walletAddress ?? 'Connect wallet first'}</div>
+              </label>
             </div>
 
+            <div className="funding-import-toggle-row">
+              <button
+                type="button"
+                className="btn btn-secondary btn-compact"
+                onClick={() => {
+                  setIsFundingImportOpen((current) => !current);
+                }}
+              >
+                <span className="btn-label">{isFundingImportOpen ? 'Hide import token' : 'Import token'}</span>
+              </button>
+            </div>
+
+            {isFundingImportOpen ? (
+              <div className="funding-import-panel">
+                <div className="funding-import-row">
+                  <label className="field">
+                    <span>Import token</span>
+                    <input
+                      className="mono"
+                      value={importTokenAddressInput}
+                      onChange={(event) => setImportTokenAddressInput(event.target.value)}
+                      placeholder="0x..."
+                    />
+                  </label>
+
+                  <button
+                    type="button"
+                    className={`btn btn-secondary btn-compact ${isImportingToken ? 'btn-loading' : ''}`}
+                    disabled={!importTokenAddressInput.trim() || isImportingToken}
+                    aria-busy={isImportingToken}
+                    onClick={() => {
+                      void importFundingToken();
+                    }}
+                  >
+                    <span className="btn-label">{isImportingToken ? 'Importing...' : 'Import token'}</span>
+                  </button>
+                </div>
+                <p className="hint">Enter ERC-20 token address.</p>
+                {importTokenError ? <p className="inline-error">{importTokenError}</p> : null}
+              </div>
+            ) : null}
+
             <p className="hint">
-              Send native ETH from <strong>{selectedFundingSourceChainName}</strong> to <strong>{selectedFundingDestinationChainName}</strong>.
+              Send <strong>{selectedFundingToken.symbol}</strong> from <strong>{selectedFundingSourceChainName}</strong> to{' '}
+              <strong>{selectedFundingDestinationChainName}</strong>.
             </p>
 
             <div className="bridge-summary">
               <p className="bridge-summary-tag">Balance</p>
               <div>
                 <p className="summary-title">L1 Balance</p>
-                <p className="summary-value">{formatTokenAmount(l1NativeBalance, 18)} ETH</p>
+                <p className="summary-value">
+                  {formatTokenAmount(selectedFundingSourceBalance, selectedFundingToken.decimals)} {selectedFundingToken.symbol}
+                </p>
               </div>
               <div>
                 <p className="summary-title">L1 Bridge Contract</p>
@@ -574,15 +660,16 @@ function App() {
                 void executeFunding();
               }}
             >
-              <span className="btn-label">{isFundingSubmitting ? 'Submitting L1 funding...' : 'Fund Rollup from L1'}</span>
+              <span className="btn-label">{isFundingSubmitting ? 'Submitting L1 bridge transaction...' : 'Bridge'}</span>
             </button>
             {isFundingSubmitting && fundingPhase ? <p className="hint">{fundingPhase}</p> : null}
 
-            {!isConnected ? <p className="hint">Connect a wallet to fund rollups from L1.</p> : null}
+            {!isConnected ? <p className="hint">Connect a wallet to bridge assets from L1 to a rollup.</p> : null}
             {!l1FundingConfig ? (
-              <p className="hint">L1 funding is not configured. Set L1 bridge env vars to enable this flow.</p>
+              <p className="hint">L1 bridge is not configured. Set L1 bridge env vars to enable this flow.</p>
             ) : null}
             {l1NativeBalanceQuery.isLoading ? <p className="hint">Checking L1 balance...</p> : null}
+            {l1TokenBalancesQuery.isLoading ? <p className="hint">Checking L1 token balances...</p> : null}
           </>
         ) : (
           <>

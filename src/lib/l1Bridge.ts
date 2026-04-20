@@ -19,7 +19,24 @@ export const standardBridgeEthAbi = [
   }
 ] as const;
 
-export const l1StandardBridgeAbi = standardBridgeEthAbi;
+export const standardBridgeErc20Abi = [
+  {
+    type: 'function',
+    name: 'bridgeERC20To',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: '_localToken', type: 'address' },
+      { name: '_remoteToken', type: 'address' },
+      { name: '_to', type: 'address' },
+      { name: '_amount', type: 'uint256' },
+      { name: '_minGasLimit', type: 'uint32' },
+      { name: '_extraData', type: 'bytes' }
+    ],
+    outputs: []
+  }
+] as const;
+
+export const l1StandardBridgeAbi = [...standardBridgeEthAbi, ...standardBridgeErc20Abi] as const;
 export const l2StandardBridgeAbi = standardBridgeEthAbi;
 
 export const standardBridgeCounterpartAbi = [
@@ -83,6 +100,29 @@ export const optimismPortalGameFactoryAbi = [
   }
 ] as const;
 
+export const composeL2BridgeCetFactoryAbi = [
+  {
+    type: 'function',
+    name: 'cetFactory',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }]
+  }
+] as const;
+
+export const cetFactoryPredictAddressAbi = [
+  {
+    type: 'function',
+    name: 'predictAddress',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'remoteAsset', type: 'address' },
+      { name: 'remoteChainID', type: 'uint256' }
+    ],
+    outputs: [{ name: '', type: 'address' }]
+  }
+] as const;
+
 type StandardBridgeReadClient = Pick<PublicClient, 'readContract'>;
 
 /**
@@ -103,6 +143,10 @@ export const resolveL2BridgeAddressFromL1Bridge = async ({
     });
 
     if (isHexAddress(bridgeAddress)) {
+      if (isZeroAddress(bridgeAddress)) {
+        throw new Error(`L2 bridge counterpart for ${l1BridgeAddress} is zero address.`);
+      }
+
       return bridgeAddress;
     }
   } catch {
@@ -126,6 +170,9 @@ export const resolveL2BridgeAddressFromL1Bridge = async ({
   return bridgeAddress;
 };
 
+/**
+ * Resolves address getters that can differ by casing across bridge/messenger versions.
+ */
 const readAddressWithFallback = async ({
   publicClient,
   address,
@@ -211,3 +258,46 @@ export const resolveDisputeGameFactoryAddressFromPortal = async ({
     abi: optimismPortalGameFactoryAbi,
     primaryFunctionName: 'disputeGameFactory'
   });
+
+export const resolveCetFactoryAddressFromL2Bridge = async ({
+  l2PublicClient,
+  l2BridgeAddress
+}: {
+  l2PublicClient: StandardBridgeReadClient;
+  l2BridgeAddress: `0x${string}`;
+}): Promise<`0x${string}`> =>
+  readAddressWithFallback({
+    publicClient: l2PublicClient,
+    address: l2BridgeAddress,
+    abi: composeL2BridgeCetFactoryAbi,
+    primaryFunctionName: 'cetFactory'
+  });
+
+export const resolvePredictedCetAddress = async ({
+  l2PublicClient,
+  cetFactoryAddress,
+  remoteAsset,
+  remoteChainId
+}: {
+  l2PublicClient: StandardBridgeReadClient;
+  cetFactoryAddress: `0x${string}`;
+  remoteAsset: `0x${string}`;
+  remoteChainId: number;
+}): Promise<`0x${string}`> => {
+  const predicted = await l2PublicClient.readContract({
+    address: cetFactoryAddress,
+    abi: cetFactoryPredictAddressAbi,
+    functionName: 'predictAddress',
+    args: [remoteAsset, BigInt(remoteChainId)]
+  });
+
+  if (!isHexAddress(predicted)) {
+    throw new Error(`Invalid CET predicted address for ${remoteAsset} on chain ${remoteChainId}.`);
+  }
+
+  if (isZeroAddress(predicted)) {
+    throw new Error(`Predicted CET address resolved to zero for ${remoteAsset} on chain ${remoteChainId}.`);
+  }
+
+  return predicted;
+};
