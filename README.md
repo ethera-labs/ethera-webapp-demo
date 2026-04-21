@@ -35,28 +35,105 @@ Notes:
 - `.env.testnet.example` is the minimal client-demo setup for testnet.
 - `.env.mainnet.example` is the minimal mainnet scaffold (includes required AA keys).
 
-## Complete flow
+## Current Bridge Flows (legacy branch)
 
-This demo now supports the full path:
+This branch exposes three user flows in the UI:
 
-1. `L1 -> L2` native ETH funding
-2. `L2 -> L2` bridge (ERC-20 and ETH mode)
-3. `L2 -> L1` native ETH return:
-   - initiate on rollup
-   - prove on L1
-   - finalize on L1
+1. **Rollup Bridge (`L2 -> L2`)**
+2. **L1 to Rollup Bridge (`L1 -> L2`)**
+3. **Bridge Back to L1 (`L2 -> L1`)**
 
-For `L2 -> L1`, L2 initiation deducts balance on rollup immediately.
-ETH appears on L1 only after prove + finalize complete.
+---
 
-No additional env keys are required for the return leg when L1 bridge config is already set (`VITE_TESTNET_L1_TO_ROLLUP_A_BRIDGE`, `VITE_TESTNET_L1_TO_ROLLUP_B_BRIDGE`, `VITE_TESTNET_L1_BRIDGE_MIN_GAS_LIMIT`).
+### 1) Rollup Bridge (`L2 -> L2`)
 
-Important behavior notes:
+Moves assets between Rollup A and Rollup B using a composed cross-rollup payload.
 
-- Users do not call the L1 standard bridge directly for settlement.
-- Settlement is completed through Optimism Portal prove/finalize calls (resolved dynamically from configured L1 bridge).
-- Withdrawal readiness/prove selection uses Compose dispute-game decoding (`extraData`) + portal checks, not OP default game decoding.
-- Sequencer/proposer do not automatically credit L1 wallet balance without prove/finalize.
+**What the user does**
+- Select source rollup, destination rollup, token, amount.
+- Sign once for composed cross-rollup execution.
+
+**Contracts / components involved**
+- `ComposeL2ToL2Bridge` (send + receive path)
+- Smart Account (source + destination)
+- Ethera SDK composition (`composeUnpreparedUserOps`)
+
+**Asset handling**
+- **ERC20 mode:** source token approve + send, destination receive + transfer to EOA.
+- **ETH mode:** source native pre-funding + WETH wrap/approve/send, destination receive + WETH unwrap + native transfer to EOA.
+
+**When funds are visible**
+- After source/destination rollup confirmations complete.
+
+---
+
+### 2) L1 to Rollup Bridge (`L1 -> L2`)
+
+Funds a rollup account from L1.
+
+**What the user does**
+- Choose destination rollup and amount.
+- Submit L1 bridge transaction.
+
+**Contracts / components involved**
+- `L1StandardBridge` (`bridgeETHTo`)
+- L2 bridge counterpart resolved by configuration
+
+**When funds are visible**
+- After L1 transaction confirms and L2 side finalization/derivation completes.
+
+---
+
+### 3) Bridge Back to L1 (`L2 -> L1`)
+
+Withdraws native ETH from rollup back to L1 with explicit settlement steps.
+
+**What the user does**
+1. Submit withdrawal on L2.
+2. Wait until status is **Ready to prove**.
+3. Submit **Prove on L1**.
+4. Wait until status is **Ready to finalize**.
+5. Submit **Finalize on L1**.
+
+**Contracts / components involved**
+- `L2StandardBridge` (`bridgeETHTo`) for withdrawal initiation
+- `L1CrossDomainMessenger` (resolved from configured L1 bridge)
+- `OptimismPortal` / portal contract (resolved dynamically)
+- `DisputeGameFactory` (resolved dynamically)
+
+**When funds are visible**
+- Only after **Finalize on L1** succeeds.
+
+---
+
+## Contract Role Reference
+
+- **`ComposeL2ToL2Bridge`**: handles rollup-to-rollup token/ETH transfer flow.
+- **`L1StandardBridge`**: entry point for L1 -> L2 funding transactions.
+- **`L2StandardBridge`**: entry point for L2 -> L1 withdrawal initiation.
+- **`L1CrossDomainMessenger`**: message relay layer for bridge settlement.
+- **`OptimismPortal` / portal**: prove/finalize settlement checks and execution.
+- **`DisputeGameFactory`**: source of dispute games/outputs used to determine proving readiness.
+
+---
+
+## Withdrawal Timing (important)
+
+For `L2 -> L1`, **proving is asynchronous** and depends on output/game publication cadence.
+
+That means:
+- `Waiting to prove` can be normal for some time.
+- Users must still execute **prove** and **finalize** (two separate L1 transactions).
+- L1 balance does not update at withdrawal submit time.
+
+---
+
+## Practical UX expectation
+
+For return withdrawals:
+- L2 submit is immediate.
+- Proving availability may take time depending on publisher cadence.
+- Settlement completes only after user runs prove + finalize.
 
 ### Paymaster (optional)
 
