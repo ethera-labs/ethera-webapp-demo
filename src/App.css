@@ -667,6 +667,11 @@ h1 {
   background: rgba(39, 174, 96, 0.1);
 }
 
+.status-banner-warning {
+  border: 1px solid rgba(239, 179, 0, 0.42);
+  background: rgba(239, 179, 0, 0.14);
+}
+
 .status-banner-success .status-banner-title,
 .status-banner-success .status-banner-message {
   color: #0b6f3a;
@@ -675,6 +680,16 @@ h1 {
 .status-banner-success .status-banner-close {
   border-color: rgba(39, 174, 96, 0.32);
   color: #0b6f3a;
+}
+
+.status-banner-warning .status-banner-title,
+.status-banner-warning .status-banner-message {
+  color: #8a5b00;
+}
+
+.status-banner-warning .status-banner-close {
+  border-color: rgba(239, 179, 0, 0.42);
+  color: #8a5b00;
 }
 
 .status-banner-title {

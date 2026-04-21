@@ -28,6 +28,8 @@ function App() {
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
   const [error, setError] = useState<string | null>(null);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
+  const [isReturnWarningDismissed, setIsReturnWarningDismissed] = useState(false);
+  const [hasInitiatedReturnBridge, setHasInitiatedReturnBridge] = useState(false);
   const dropdownAreaRef = useRef<HTMLDivElement | null>(null);
   const entryPointAddress = composeConfig.entryPoint.address as `0x${string}`;
 
@@ -220,6 +222,8 @@ function App() {
       setFlowMode(nextFlowMode);
       setError(null);
       setSuccessNotice(null);
+      setIsReturnWarningDismissed(false);
+      setHasInitiatedReturnBridge(false);
       setOpenMenu(null);
       closeDepositModal(clearBridgePhase);
       clearFundingPhase();
@@ -231,6 +235,8 @@ function App() {
   const handleDisconnect = useCallback(async () => {
     setError(null);
     setSuccessNotice(null);
+    setIsReturnWarningDismissed(false);
+    setHasInitiatedReturnBridge(false);
     setOpenMenu(null);
     closeDepositModal(clearBridgePhase);
     clearFundingPhase();
@@ -350,6 +356,24 @@ function App() {
               className="status-banner-close"
               aria-label="Dismiss success message"
               onClick={() => setSuccessNotice(null)}
+            >
+              Dismiss
+            </button>
+          </div>
+        ) : null}
+
+        {activeFlowMode === 'return' && hasInitiatedReturnBridge && !error && !successNotice && !isReturnWarningDismissed ? (
+          <div className="status-banner status-banner-warning" role="status" aria-live="polite">
+            <div>
+              <p className="status-banner-message">
+                Proving is not immediate and may take up to 1 hour, depending on network publishing cadence.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="status-banner-close"
+              aria-label="Dismiss return timing notice"
+              onClick={() => setIsReturnWarningDismissed(true)}
             >
               Dismiss
             </button>
@@ -665,6 +689,7 @@ function App() {
               disabled={!canSubmitReturn}
               aria-busy={isReturnSubmitting}
               onClick={() => {
+                setHasInitiatedReturnBridge(true);
                 void executeReturn();
               }}
             >
