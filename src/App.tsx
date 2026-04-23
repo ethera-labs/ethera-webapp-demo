@@ -34,7 +34,7 @@ const BASE_SUPPORTED_CHAIN_IDS = [chainA.id, chainB.id] as const;
  * Main demo surface for wallet connect, cross-rollup bridge, and L1 funding modes.
  */
 function App() {
-  const [flowMode, setFlowMode] = useState<FlowMode>('fund');
+  const [flowMode, setFlowMode] = useState<FlowMode>('bridge');
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
   const [isFundingImportOpen, setIsFundingImportOpen] = useState(false);
   const [isReturnImportOpen, setIsReturnImportOpen] = useState(false);
@@ -112,6 +112,7 @@ function App() {
     destinationBalanceQuery,
     accountsLoading,
     sourceBalancesLoading,
+    bridgeDisabledReason,
     canSubmitBridge,
     executeBridge,
     isSubmitting,
@@ -289,7 +290,7 @@ function App() {
   ]);
 
   const activeFlowMode: FlowMode = l1FundingConfig ? flowMode : 'bridge';
-  const isBridgeFlowEnabled = false;
+  const isBridgeFlowEnabled = bridgeDisabledReason === null;
 
   if (!selectedToken) {
     return (
@@ -340,8 +341,8 @@ function App() {
         <div>
           <h2>One-click cross-rollup token movement</h2>
           <p>
-            This demo builds two chain-specific user operations, composes them into one cross-rollup payload, and submits
-            them atomically with the Ethera SDK.
+            This demo builds source and destination user operations up front and submits one composed cross-rollup payload
+            with the Ethera SDK.
           </p>
         </div>
         <WalletPanel
@@ -540,7 +541,7 @@ function App() {
           ) : (
             <>
               <p className="hint hint-warning">
-                Universal L2 to L2 migration is in progress. Rollup bridge execution is temporarily disabled.
+                {bridgeDisabledReason}
               </p>
             </>
           )

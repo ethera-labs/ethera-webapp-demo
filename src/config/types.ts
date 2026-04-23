@@ -8,12 +8,14 @@ export type AccountAbstractionContracts = {
 };
 
 export type DemoTokenKind = 'erc20' | 'nativeEthViaWeth';
+export type DemoTokenBridgeMode = 'erc20' | 'cet';
 
 export type DemoToken = {
   symbol: string;
   address: `0x${string}`;
   decimals: number;
   kind: DemoTokenKind;
+  bridgeMode?: DemoTokenBridgeMode;
 };
 
 export type L1FundingConfig = {

@@ -14,19 +14,21 @@ import {
   toHttpUrl
 } from './env';
 import { resolvePaymasterByChainId } from './paymaster';
-import type { AccountAbstractionContracts, DemoToken, NetworkProfile } from './types';
+import type { AccountAbstractionContracts, DemoToken, DemoTokenBridgeMode, NetworkProfile } from './types';
 
 // Network profile builders for testnet/mainnet compose runtime setup.
 
 const resolveSingleToken = ({
   addressKey,
   decimalsKey,
+  bridgeModeKey,
   symbolKey,
   defaultSymbol,
   defaultDecimals
 }: {
   addressKey: string;
   decimalsKey: string;
+  bridgeModeKey?: string;
   symbolKey: string;
   defaultSymbol: string;
   defaultDecimals: number;
@@ -35,12 +37,22 @@ const resolveSingleToken = ({
   if (!addressValue) return undefined;
 
   const decimalsValue = getEnv(decimalsKey);
+  const bridgeModeValue = bridgeModeKey ? getEnv(bridgeModeKey) : undefined;
+  const bridgeMode =
+    bridgeModeValue === undefined
+      ? undefined
+      : bridgeModeValue === 'erc20' || bridgeModeValue === 'cet'
+        ? (bridgeModeValue as DemoTokenBridgeMode)
+        : (() => {
+            throw new Error(`Invalid ${bridgeModeKey}. Expected "erc20" or "cet".`);
+          })();
 
   return {
     symbol: getEnv(symbolKey) ?? defaultSymbol,
     address: toAddress(addressValue, addressKey),
     decimals: decimalsValue ? parseNonNegativeInt(decimalsValue, decimalsKey) : defaultDecimals,
-    kind: 'erc20'
+    kind: 'erc20',
+    ...(bridgeMode ? { bridgeMode } : {})
   };
 };
 
@@ -68,6 +80,18 @@ const resolveTestnetTokens = (singleToken: DemoToken): readonly DemoToken[] => {
 const resolveOptionalAddressEnv = (key: string): `0x${string}` | undefined => {
   const value = getEnv(key);
   return value ? toAddress(value, key) : undefined;
+};
+
+const assertCompleteUniversalRouteConfig = (keys: Record<string, `0x${string}` | undefined>) => {
+  const configured = Object.entries(keys).filter(([, value]) => value !== undefined).map(([key]) => key);
+  if (configured.length === 0) return;
+
+  const missing = Object.entries(keys).filter(([, value]) => value === undefined).map(([key]) => key);
+  if (missing.length === 0) return;
+
+  throw new Error(
+    `Universal bridge route config is partial. Missing: ${missing.join(', ')}. Configure all required universal route keys together.`
+  );
 };
 
 const makeTestnetChain = ({
@@ -233,6 +257,14 @@ export const createTestnetProfile = (): NetworkProfile => {
   const rollupAComposeL2Bridge = resolveOptionalAddressEnv('VITE_TESTNET_ROLLUP_A_COMPOSE_L2_BRIDGE');
   const rollupBComposeL2Bridge = resolveOptionalAddressEnv('VITE_TESTNET_ROLLUP_B_COMPOSE_L2_BRIDGE');
 
+  assertCompleteUniversalRouteConfig({
+    VITE_TESTNET_UNIVERSAL_L2_TO_L2_BRIDGE: universalL2ToL2Bridge,
+    VITE_TESTNET_ROLLUP_A_COMPOSE_L2_BRIDGE: rollupAComposeL2Bridge,
+    VITE_TESTNET_ROLLUP_B_COMPOSE_L2_BRIDGE: rollupBComposeL2Bridge,
+    VITE_TESTNET_ROLLUP_A_COMPOSE_PORTAL: rollupAComposePortal,
+    VITE_TESTNET_ROLLUP_B_COMPOSE_PORTAL: rollupBComposePortal
+  });
+
   const universalContracts =
     universalL2ToL2Bridge ||
     universalMailbox ||
@@ -269,6 +301,7 @@ export const createTestnetProfile = (): NetworkProfile => {
   const singleToken = resolveSingleToken({
     addressKey: 'VITE_TESTNET_TOKEN_ADDRESS',
     decimalsKey: 'VITE_TESTNET_TOKEN_DECIMALS',
+    bridgeModeKey: 'VITE_TESTNET_TOKEN_BRIDGE_MODE',
     symbolKey: 'VITE_TESTNET_TOKEN_SYMBOL',
     defaultSymbol: 'TOKEN',
     defaultDecimals: 18
@@ -346,6 +379,7 @@ export const createMainnetProfile = (): NetworkProfile => {
   const singleToken = resolveSingleToken({
     addressKey: 'VITE_MAINNET_TOKEN_ADDRESS',
     decimalsKey: 'VITE_MAINNET_TOKEN_DECIMALS',
+    bridgeModeKey: 'VITE_MAINNET_TOKEN_BRIDGE_MODE',
     symbolKey: 'VITE_MAINNET_TOKEN_SYMBOL',
     defaultSymbol: 'TOKEN',
     defaultDecimals: 18

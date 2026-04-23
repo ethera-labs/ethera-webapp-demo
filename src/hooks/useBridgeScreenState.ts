@@ -2,8 +2,9 @@ import { useQuery } from '@tanstack/react-query';
 import { useSmartAccount } from '@ssv-labs/ethera-sdk/react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { erc20Abi } from 'viem';
-import { chainA, chainB, bridgeAddress, composeConfig, demoTokens, networkProfile, type DemoToken } from '../composeConfig';
+import { chainA, chainB, composeConfig, demoTokens, networkProfile, universalContracts, type DemoToken } from '../composeConfig';
 import { formatChainLabel, formatTokenAmount } from '../lib/format';
+import { resolveDestinationPayoutTokenAddress, resolveSourceTokenBridgeMode } from './bridgeExecution';
 import { useBridgeExecution } from './useBridgeExecution';
 import type { PickerOption } from '../components/Picker';
 import type { DepositRequirement } from '../types/deposit';
@@ -44,6 +45,7 @@ export function useBridgeScreenState({
   const [amountInput, setAmountInput] = useState('');
 
   const entryPointAddress = composeConfig.entryPoint.address as `0x${string}`;
+  const universalBridgeAddress = universalContracts?.l2ToL2Bridge;
 
   const smartAccountAQuery = useSmartAccount({ chainId: chainA.id, multiChainIds: CHAIN_IDS });
   const smartAccountBQuery = useSmartAccount({ chainId: chainB.id, multiChainIds: CHAIN_IDS });
@@ -136,8 +138,23 @@ export function useBridgeScreenState({
   });
 
   const destinationBalanceQuery = useQuery({
-    queryKey: ['destination-balance', destinationChain.id, selectedToken?.kind, selectedToken?.address, walletAddress],
-    enabled: Boolean(destinationSmart?.publicClient && walletAddress && selectedToken),
+    queryKey: [
+      'destination-balance',
+      destinationChain.id,
+      sourceChain.id,
+      sourceSmart?.account.address,
+      destinationSmart?.account.address,
+      universalBridgeAddress,
+      selectedToken?.kind,
+      selectedToken?.address,
+      walletAddress
+    ],
+    enabled: Boolean(
+      destinationSmart?.publicClient &&
+        walletAddress &&
+        selectedToken &&
+        (selectedToken.kind === 'nativeEthViaWeth' || sourceSmart?.publicClient)
+    ),
     queryFn: async () => {
       const smart = destinationSmart;
       const eoaAddress = walletAddress;
@@ -151,8 +168,36 @@ export function useBridgeScreenState({
         return smart.publicClient.getBalance({ address: eoaAddress });
       }
 
+      const sourceSmartAccount = sourceSmart;
+      if (!sourceSmartAccount) {
+        throw new Error('Source smart account is not ready yet.');
+      }
+
+      if (!universalBridgeAddress) {
+        return smart.publicClient.readContract({
+          address: selectedToken.address,
+          abi: erc20Abi,
+          functionName: 'balanceOf',
+          args: [eoaAddress]
+        });
+      }
+
+      const sourceTokenBridgeMode = await resolveSourceTokenBridgeMode({
+        sourceSmart: sourceSmartAccount,
+        selectedToken
+      });
+      const destinationPayoutTokenAddress = await resolveDestinationPayoutTokenAddress({
+        sourceSmart: sourceSmartAccount,
+        destinationSmart: smart,
+        selectedToken,
+        sourceTokenBridgeMode,
+        sourceChainId: sourceChain.id,
+        destinationChainId: destinationChain.id,
+        universalBridgeAddress
+      });
+
       return smart.publicClient.readContract({
-        address: selectedToken.address,
+        address: destinationPayoutTokenAddress,
         abi: erc20Abi,
         functionName: 'balanceOf',
         args: [eoaAddress]
@@ -208,7 +253,7 @@ export function useBridgeScreenState({
     destinationChain,
     sourceSmart,
     destinationSmart,
-    bridgeAddress,
+    universalBridgeAddress,
     entryPointAddress,
     hasPaymaster: Boolean(networkProfile.paymasterByChainId),
     ensureWalletOnChain,
@@ -232,11 +277,16 @@ export function useBridgeScreenState({
   const canSubmitBridge =
     isConnected &&
     Boolean(selectedToken) &&
+    Boolean(universalBridgeAddress) &&
     hasAmountInput &&
     !accountsLoading &&
     !isSubmitting &&
     sourceChain.id !== destinationChain.id &&
     selectedTokenHasBalance;
+
+  const bridgeDisabledReason = universalBridgeAddress
+    ? null
+    : 'Universal L2->L2 bridge address is missing. Set VITE_TESTNET_UNIVERSAL_L2_TO_L2_BRIDGE.';
 
   const sourceOptions: PickerOption<number>[] = useMemo(
     () =>
@@ -301,6 +351,7 @@ export function useBridgeScreenState({
     destinationBalanceQuery,
     accountsLoading,
     sourceBalancesLoading,
+    bridgeDisabledReason,
     canSubmitBridge,
     executeBridge,
     isSubmitting,

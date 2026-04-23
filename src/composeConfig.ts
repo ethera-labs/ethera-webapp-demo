@@ -1,7 +1,14 @@
 import type { Chain } from 'viem';
 import { createComposeRuntimeConfig, createWagmiRuntimeConfig, createWalletChains } from './config/clients';
 import { createNetworkProfile } from './config/profiles';
-export type { AccountAbstractionContracts, DemoToken, DemoTokenKind, L1FundingConfig, NetworkProfile } from './config/types';
+export type {
+  AccountAbstractionContracts,
+  DemoToken,
+  DemoTokenBridgeMode,
+  DemoTokenKind,
+  L1FundingConfig,
+  NetworkProfile
+} from './config/types';
 
 // Public runtime config surface consumed by the app and hooks.
 export const networkProfile = createNetworkProfile();

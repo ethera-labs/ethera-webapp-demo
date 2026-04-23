@@ -55,18 +55,22 @@ export type SourceFundingContext =
       amountToFundSmartAccountFromEoa: bigint;
     };
 
+export type SourceTokenBridgeMode = 'erc20' | 'cet';
+
 export type BuildBridgeCallsParams = {
   selectedToken: DemoToken;
   walletAddress: `0x${string}`;
   sender: `0x${string}`;
   receiver: `0x${string}`;
   destinationEoaReceiver: `0x${string}`;
-  bridgeAddress: `0x${string}`;
+  destinationPayoutTokenAddress: `0x${string}`;
+  universalBridgeAddress: `0x${string}`;
   sourceChainId: number;
   destinationChainId: number;
   amount: bigint;
   sessionId: bigint;
   amountToPullFromEoa: bigint;
+  sourceTokenBridgeMode: SourceTokenBridgeMode;
 };
 
 export type ResolveEntryPointDepositRequirementsParams = {
@@ -83,20 +87,33 @@ export type ExecuteComposedBridgeFlowParams = {
   sourceSmartAccount: SmartAccountData;
   destinationSmartAccount: SmartAccountData;
   sourceChain: Chain;
+  destinationChain: Chain;
   sourceCalls: BridgeCall[];
   destinationCalls: BridgeCall[];
   selectedToken: DemoToken;
   walletAddress: `0x${string}`;
   sender: `0x${string}`;
+  receiver: `0x${string}`;
   fundingContext: SourceFundingContext;
   ensureWalletOnChain: (targetChainId: number) => Promise<unknown>;
   setBridgePhase: (value: string | null) => void;
-  onPayloadSubmitted: (params: { hashesToTrack: `0x${string}`[]; explorerUrls: string[] }) => void;
+  onStageSubmitted: (params: {
+    hash: `0x${string}`;
+    explorerUrl: string;
+    chainLabel: string;
+    stepLabel: string;
+  }) => void;
+  onStageStatusUpdated: (params: {
+    hash: `0x${string}`;
+    status: BridgeReceiptStatus;
+  }) => void;
 };
 
 export type ExecuteComposedBridgeFlowResult = {
   hashesToTrack: `0x${string}`[];
   explorerUrls: string[];
+  chainLabels: string[];
+  stepLabels: string[];
   receiptStatuses: BridgeReceiptStatus[];
 };
 

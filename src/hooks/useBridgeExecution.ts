@@ -11,6 +11,8 @@ import {
   executeComposedBridgeFlow,
   loadSourceFundingContext,
   markNonSuccessfulStatusesFailed,
+  resolveDestinationPayoutTokenAddress,
+  resolveSourceTokenBridgeMode,
   resolveBridgeExecutionError,
   resolveEntryPointDepositRequirements,
   type BridgeCall,
@@ -28,7 +30,7 @@ type UseBridgeExecutionParams = {
   destinationChain: Chain;
   sourceSmart: SmartAccountData | undefined;
   destinationSmart: SmartAccountData | undefined;
-  bridgeAddress: `0x${string}`;
+  universalBridgeAddress: `0x${string}` | undefined;
   entryPointAddress: `0x${string}`;
   hasPaymaster: boolean;
   ensureWalletOnChain: (targetChainId: number) => Promise<unknown>;
@@ -50,7 +52,7 @@ export function useBridgeExecution({
   destinationChain,
   sourceSmart,
   destinationSmart,
-  bridgeAddress,
+  universalBridgeAddress,
   entryPointAddress,
   hasPaymaster,
   ensureWalletOnChain,
@@ -81,6 +83,51 @@ export function useBridgeExecution({
     });
   }, []);
 
+  const appendBridgeStage = useCallback(
+    ({
+      sessionId,
+      hash,
+      explorerUrl,
+      chainLabel,
+      stepLabel
+    }: {
+      sessionId: bigint;
+      hash: `0x${string}`;
+      explorerUrl: string;
+      chainLabel: string;
+      stepLabel: string;
+    }) => {
+      upsertBridgeResult(sessionId, (existing) => ({
+        hashes: [...(existing?.hashes ?? []), hash],
+        explorerUrls: [...(existing?.explorerUrls ?? []), explorerUrl],
+        chainLabels: [...(existing?.chainLabels ?? []), chainLabel],
+        stepLabels: [...(existing?.stepLabels ?? []), stepLabel],
+        sessionId,
+        receiptStatuses: [...(existing?.receiptStatuses ?? []), 'pending']
+      }));
+    },
+    [upsertBridgeResult]
+  );
+
+  const setBridgeStageStatus = useCallback(
+    ({ hash, status }: { hash: `0x${string}`; status: BridgeResult['receiptStatuses'][number] }) => {
+      setResults((previous) =>
+        previous.map((item) => {
+          const stageIndex = item.hashes.findIndex((itemHash) => itemHash === hash);
+          if (stageIndex === -1) return item;
+
+          const nextStatuses = [...item.receiptStatuses];
+          nextStatuses[stageIndex] = status;
+          return {
+            ...item,
+            receiptStatuses: nextStatuses
+          };
+        })
+      );
+    },
+    []
+  );
+
   const checkEntryPointDepositRequirements = useCallback(
     async ({
       sourceSmartAccount,
@@ -109,6 +156,11 @@ export function useBridgeExecution({
   const executeBridge = useCallback(
     async (options?: { skipDepositCheck?: boolean }) => {
       onClearErrors();
+
+      if (!universalBridgeAddress) {
+        onBridgeError('Universal L2->L2 bridge is not configured. Set VITE_TESTNET_UNIVERSAL_L2_TO_L2_BRIDGE and reload.');
+        return;
+      }
 
       const validation = validateBridgeExecutionInput({
         amountInput,
@@ -154,18 +206,34 @@ export function useBridgeExecution({
       const sessionId = BigInt(Date.now());
       // Only ERC20 mode needs transferFrom pull from EOA; ETH mode pre-funds native in execution step.
       const amountToPullFromEoa = fundingContext.kind === 'erc20' ? fundingContext.amountToPullFromEoa : 0n;
+      const sourceTokenBridgeMode = await resolveSourceTokenBridgeMode({
+        sourceSmart: sourceSmartAccount,
+        selectedToken: validatedToken
+      });
+      const destinationPayoutTokenAddress = await resolveDestinationPayoutTokenAddress({
+        sourceSmart: sourceSmartAccount,
+        destinationSmart: destinationSmartAccount,
+        selectedToken: validatedToken,
+        sourceTokenBridgeMode,
+        sourceChainId: sourceChain.id,
+        destinationChainId: destinationChain.id,
+        universalBridgeAddress
+      });
+
       const { sourceCalls, destinationCalls } = buildBridgeCalls({
         selectedToken: validatedToken,
         walletAddress: validatedWalletAddress,
         sender,
         receiver,
         destinationEoaReceiver,
-        bridgeAddress,
+        destinationPayoutTokenAddress,
+        universalBridgeAddress,
         sourceChainId: sourceChain.id,
         destinationChainId: destinationChain.id,
         amount,
         sessionId,
-        amountToPullFromEoa
+        amountToPullFromEoa,
+        sourceTokenBridgeMode
       });
 
       const shouldCheckEntryPointDeposit = !options?.skipDepositCheck && !hasPaymaster;
@@ -194,30 +262,36 @@ export function useBridgeExecution({
           sourceSmartAccount,
           destinationSmartAccount,
           sourceChain,
+          destinationChain,
           sourceCalls,
           destinationCalls,
           selectedToken: validatedToken,
           walletAddress: validatedWalletAddress,
           sender,
+          receiver,
           // Funding context carries mode-specific precompose requirements (native prefund vs ERC20 approval).
           fundingContext,
           ensureWalletOnChain,
           setBridgePhase,
-          onPayloadSubmitted: ({ hashesToTrack, explorerUrls }) => {
-            upsertBridgeResult(sessionId, () => ({
-              hashes: hashesToTrack,
-              explorerUrls,
-              chainLabels: [sourceChain.name, destinationChain.name],
+          onStageSubmitted: ({ hash, explorerUrl, chainLabel, stepLabel }) => {
+            appendBridgeStage({
               sessionId,
-              receiptStatuses: hashesToTrack.map(() => 'pending')
-            }));
+              hash,
+              explorerUrl,
+              chainLabel,
+              stepLabel
+            });
+          },
+          onStageStatusUpdated: ({ hash, status }) => {
+            setBridgeStageStatus({ hash, status });
           }
         });
 
         upsertBridgeResult(sessionId, (existing) => ({
           hashes: existing?.hashes ?? execution.hashesToTrack,
           explorerUrls: existing?.explorerUrls ?? execution.explorerUrls,
-          chainLabels: existing?.chainLabels ?? [sourceChain.name, destinationChain.name],
+          chainLabels: existing?.chainLabels ?? execution.chainLabels,
+          stepLabels: existing?.stepLabels ?? execution.stepLabels,
           sessionId,
           receiptStatuses: execution.receiptStatuses
         }));
@@ -246,11 +320,12 @@ export function useBridgeExecution({
     },
     [
       amountInput,
-      bridgeAddress,
       checkEntryPointDepositRequirements,
       destinationChain,
       destinationSmart,
       ensureWalletOnChain,
+      appendBridgeStage,
+      setBridgeStageStatus,
       hasPaymaster,
       onBridgeError,
       onClearErrors,
@@ -260,6 +335,7 @@ export function useBridgeExecution({
       sourceBalance,
       sourceChain,
       sourceSmart,
+      universalBridgeAddress,
       upsertBridgeResult,
       walletAddress
     ]
