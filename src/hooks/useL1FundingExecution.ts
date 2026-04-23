@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { encodeAbiParameters, erc20Abi, parseEther, parseUnits, type Chain } from 'viem';
+import { erc20Abi, parseEther, parseUnits, type Chain } from 'viem';
 import { getL2TransactionHashes } from 'viem/op-stack';
 import { composeConfig, type DemoToken, type L1FundingConfig } from '../composeConfig';
 import { normalizeExecutionErrorMessage } from '../lib/errors';
@@ -256,34 +256,6 @@ export function useL1FundingExecution({
           ? new URL(`token/${predictedCetAddress}`, destinationExplorerBaseUrl).toString()
           : undefined;
 
-        const [name, symbol, decimals] = await Promise.all([
-          l1PublicClient.readContract({
-            address: selectedToken.address,
-            abi: erc20Abi,
-            functionName: 'name'
-          }),
-          l1PublicClient.readContract({
-            address: selectedToken.address,
-            abi: erc20Abi,
-            functionName: 'symbol'
-          }),
-          l1PublicClient.readContract({
-            address: selectedToken.address,
-            abi: erc20Abi,
-            functionName: 'decimals'
-          })
-        ]);
-
-        const extraData = encodeAbiParameters(
-          [
-            { name: 'name', type: 'string' },
-            { name: 'symbol', type: 'string' },
-            { name: 'decimals', type: 'uint8' },
-            { name: 'userExtra', type: 'bytes' }
-          ],
-          [String(name), String(symbol), Number(decimals), '0x']
-        );
-
         setPhase(`Submitting L1 ${selectedToken.symbol} bridge transaction...`);
         submittedHash = await walletClient.writeContract({
           address: bridgeContract,
@@ -295,7 +267,7 @@ export function useL1FundingExecution({
             walletAddress,
             amountWei,
             l1FundingConfig.minGasLimit,
-            extraData
+            '0x'
           ]
         });
       }
