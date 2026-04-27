@@ -325,6 +325,15 @@ export const createTestnetProfile = (): NetworkProfile => {
     chainBId: chainBResolved.id
   });
 
+  const bridgeAddress =
+    resolveOptionalAddressEnv('VITE_TESTNET_BRIDGE') ??
+    universalL2ToL2Bridge ??
+    (() => {
+      throw new Error(
+        'Missing testnet bridge config. Define VITE_TESTNET_UNIVERSAL_L2_TO_L2_BRIDGE or VITE_TESTNET_BRIDGE.'
+      );
+    })();
+
   return {
     mode: 'testnet',
     label: getEnv('VITE_TESTNET_LABEL') ?? 'Ethera Testnet',
@@ -334,7 +343,7 @@ export const createTestnetProfile = (): NetworkProfile => {
       [chainBResolved.id]: chainBRpc,
       ...(l1Funding ? { [l1Funding.chain.id]: l1Funding.rpc } : {})
     },
-    bridgeAddress: toAddress(getRequiredEnv('VITE_TESTNET_BRIDGE'), 'VITE_TESTNET_BRIDGE'),
+    bridgeAddress,
     accountAbstractionContracts: {
       [chainAResolved.id]: chainAContracts,
       [chainBResolved.id]: chainBContracts
