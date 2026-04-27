@@ -1,3 +1,4 @@
+import { buildProveWithdrawal, type BuildProveWithdrawalReturnType, type GetWithdrawalsReturnType } from 'viem/op-stack';
 import { ContractFunctionRevertedError, decodeAbiParameters, type PublicClient } from 'viem';
 
 export type ComposeWithdrawalStatus =
@@ -12,6 +13,21 @@ type BasicWithdrawal = {
   withdrawalHash: `0x${string}`;
 };
 
+type Withdrawal = GetWithdrawalsReturnType[number];
+
+type OutputRootProof = BuildProveWithdrawalReturnType['outputRootProof'];
+type WithdrawalProof = BuildProveWithdrawalReturnType['withdrawalProof'];
+type ProveableWithdrawal = BuildProveWithdrawalReturnType['withdrawal'];
+
+type SuperRootProof = {
+  version: `0x${string}`;
+  timestamp: bigint;
+  outputRoots: {
+    chainId: bigint;
+    root: `0x${string}`;
+  }[];
+};
+
 type RawComposeGame = {
   index: bigint;
   metadata: `0x${string}`;
@@ -21,8 +37,10 @@ type RawComposeGame = {
 };
 
 type DecodedPerChainOutput = {
+  index: bigint;
   chainId: bigint;
   l2BlockNumber: bigint;
+  root: `0x${string}`;
 };
 
 export type ComposeGameForProve = {
@@ -37,6 +55,16 @@ export type ComposeGameForProve = {
 export type ComposeWithdrawalStatusResult = {
   status: ComposeWithdrawalStatus;
   game?: ComposeGameForProve;
+  proofSubmitter?: `0x${string}`;
+};
+
+export type ComposeProveWithdrawalArgs = {
+  withdrawal: ProveableWithdrawal;
+  disputeGameProxy: `0x${string}`;
+  outputRootIndex: bigint;
+  superRootProof: SuperRootProof;
+  outputRootProof: OutputRootProof;
+  withdrawalProof: WithdrawalProof;
 };
 
 const GAME_SCAN_LIMIT = 50n;
@@ -66,6 +94,13 @@ const disputeGameFactoryAbi = [
         type: 'tuple[]'
       }
     ]
+  },
+  {
+    type: 'function',
+    name: 'gameAtIndex',
+    stateMutability: 'view',
+    inputs: [{ type: 'uint256' }],
+    outputs: [{ type: 'uint32' }, { type: 'uint64' }, { type: 'address' }]
   }
 ] as const;
 
@@ -118,10 +153,19 @@ const portalStatusAbi = [
     stateMutability: 'view',
     inputs: [],
     outputs: [{ type: 'uint256' }]
+  },
+  {
+    type: 'function',
+    name: 'superRootsActive',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'bool' }]
   }
 ] as const;
 
-const decodeComposeOutputs = (extraData: `0x${string}`): DecodedPerChainOutput[] => {
+const decodeComposeOutputs = (
+  extraData: `0x${string}`
+): { superRootProof: SuperRootProof; perChainOutputs: DecodedPerChainOutput[] } => {
   const [aggregationOutputs, superRootProof] = decodeAbiParameters(
     [
       {
@@ -167,12 +211,24 @@ const decodeComposeOutputs = (extraData: `0x${string}`): DecodedPerChainOutput[]
 
   for (let index = 0; index < outputCount; index += 1) {
     perChainOutputs.push({
+      index: BigInt(index),
       chainId: superRootProof.outputRoots[index].chainId,
-      l2BlockNumber: BigInt(aggregationOutputs.bootInfo[index].l2BlockNumber)
+      l2BlockNumber: BigInt(aggregationOutputs.bootInfo[index].l2BlockNumber),
+      root: superRootProof.outputRoots[index].root
     });
   }
 
-  return perChainOutputs;
+  return {
+    superRootProof: {
+      version: superRootProof.version,
+      timestamp: BigInt(superRootProof.timestamp),
+      outputRoots: superRootProof.outputRoots.map((outputRoot) => ({
+        chainId: outputRoot.chainId,
+        root: outputRoot.root
+      }))
+    },
+    perChainOutputs
+  };
 };
 
 const extractCheckWithdrawalStatus = (error: unknown): ComposeWithdrawalStatus | undefined => {
@@ -276,7 +332,7 @@ export const findComposeGameForWithdrawal = async ({
   });
 
   for (const game of games) {
-    const perChainOutputs = decodeComposeOutputs(game.extraData);
+    const { perChainOutputs } = decodeComposeOutputs(game.extraData);
     const sourceChainOutput = perChainOutputs.find((output) => output.chainId === BigInt(sourceChainId));
 
     if (!sourceChainOutput) {
@@ -296,6 +352,117 @@ export const findComposeGameForWithdrawal = async ({
   }
 
   return null;
+};
+
+const assertSuperRootPortal = async ({
+  l1PublicClient,
+  portalAddress
+}: {
+  l1PublicClient: Pick<PublicClient, 'readContract'>;
+  portalAddress: `0x${string}`;
+}): Promise<void> => {
+  const superRootsActive = await l1PublicClient.readContract({
+    address: portalAddress,
+    abi: portalStatusAbi,
+    functionName: 'superRootsActive'
+  });
+
+  if (!superRootsActive) {
+    throw new Error('Configured portal is not using super-root proving. This app only supports the universal bridge settlement path.');
+  }
+};
+
+const resolveComposeGameProxy = async ({
+  l1PublicClient,
+  disputeGameFactoryAddress,
+  gameIndex
+}: {
+  l1PublicClient: Pick<PublicClient, 'readContract'>;
+  disputeGameFactoryAddress: `0x${string}`;
+  gameIndex: bigint;
+}): Promise<`0x${string}`> => {
+  const [, , proxyAddress] = await l1PublicClient.readContract({
+    address: disputeGameFactoryAddress,
+    abi: disputeGameFactoryAbi,
+    functionName: 'gameAtIndex',
+    args: [gameIndex]
+  });
+
+  if (!proxyAddress || /^0x0{40}$/i.test(proxyAddress)) {
+    throw new Error(`Could not resolve dispute game proxy for game index ${gameIndex}.`);
+  }
+
+  return proxyAddress;
+};
+
+export const buildComposeProveWithdrawalArgs = async ({
+  sourcePublicClient,
+  l1PublicClient,
+  portalAddress,
+  disputeGameFactoryAddress,
+  sourceChainId,
+  game,
+  withdrawal,
+  withdrawalL2BlockNumber
+}: {
+  sourcePublicClient: unknown;
+  l1PublicClient: Pick<PublicClient, 'readContract'>;
+  portalAddress: `0x${string}`;
+  disputeGameFactoryAddress: `0x${string}`;
+  sourceChainId: number;
+  game?: ComposeGameForProve;
+  withdrawal: Withdrawal;
+  withdrawalL2BlockNumber: bigint;
+}): Promise<ComposeProveWithdrawalArgs> => {
+  const [, resolvedGame] = await Promise.all([
+    assertSuperRootPortal({
+      l1PublicClient,
+      portalAddress
+    }),
+    game
+      ? Promise.resolve(game)
+      : findComposeGameForWithdrawal({
+          l1PublicClient,
+          portalAddress,
+          disputeGameFactoryAddress,
+          sourceChainId,
+          withdrawalL2BlockNumber
+        })
+  ]);
+
+  if (!resolvedGame) {
+    throw new Error('Could not resolve an eligible Compose dispute game for this withdrawal yet.');
+  }
+
+  const proveArgs = await buildProveWithdrawal(sourcePublicClient as never, {
+    game: {
+      index: resolvedGame.index,
+      l2BlockNumber: resolvedGame.l2BlockNumber
+    },
+    withdrawal
+  } as never);
+
+  const { superRootProof, perChainOutputs } = decodeComposeOutputs(resolvedGame.extraData);
+  const outputRoot = perChainOutputs.find((output) => output.chainId === BigInt(sourceChainId));
+
+  if (!outputRoot) {
+    throw new Error(`Could not find source-chain output root for chain ${sourceChainId}.`);
+  }
+
+  const disputeGameProxy = await resolveComposeGameProxy({
+    l1PublicClient,
+    disputeGameFactoryAddress,
+    gameIndex: resolvedGame.index
+  });
+
+  return {
+    withdrawal: proveArgs.withdrawal,
+    disputeGameProxy,
+    outputRootIndex: outputRoot.index,
+    superRootProof,
+    outputRootProof: proveArgs.outputRootProof,
+    withdrawalProof: proveArgs.withdrawalProof
+  };
 };
 
 export const getLatestProofSubmitter = async ({
@@ -341,6 +508,11 @@ export const getComposeWithdrawalStatus = async ({
   withdrawal: BasicWithdrawal;
   withdrawalL2BlockNumber: bigint;
 }): Promise<ComposeWithdrawalStatusResult> => {
+  await assertSuperRootPortal({
+    l1PublicClient,
+    portalAddress
+  });
+
   const finalized = await l1PublicClient.readContract({
     address: portalAddress,
     abi: portalStatusAbi,
@@ -375,11 +547,11 @@ export const getComposeWithdrawalStatus = async ({
           args: [withdrawal.withdrawalHash, latestProofSubmitter]
         });
 
-        return { status: 'ready-to-finalize' };
+        return { status: 'ready-to-finalize', proofSubmitter: latestProofSubmitter };
       } catch (error) {
         const checkStatus = extractCheckWithdrawalStatus(error);
         if (checkStatus) {
-          return { status: checkStatus };
+          return { status: checkStatus, proofSubmitter: latestProofSubmitter };
         }
       }
 
@@ -393,7 +565,8 @@ export const getComposeWithdrawalStatus = async ({
       const maturityTime = BigInt(proveTimestamp) + proofMaturityDelaySeconds;
 
       return {
-        status: nowSeconds < maturityTime ? 'waiting-to-finalize' : 'ready-to-finalize'
+        status: nowSeconds < maturityTime ? 'waiting-to-finalize' : 'ready-to-finalize',
+        proofSubmitter: latestProofSubmitter
       };
     }
   }

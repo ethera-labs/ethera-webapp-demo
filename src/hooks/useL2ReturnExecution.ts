@@ -1,14 +1,9 @@
 import { useCallback, useMemo, useState } from 'react';
 import { erc20Abi, type Chain } from 'viem';
-import {
-  buildProveWithdrawal,
-  finalizeWithdrawal,
-  getWithdrawals,
-  proveWithdrawal
-} from 'viem/op-stack';
+import { getWithdrawals } from 'viem/op-stack';
 import { composeConfig, type L1FundingConfig } from '../composeConfig';
 import { parsePositiveAssetAmountInput } from '../lib/assets';
-import { getComposeWithdrawalStatus } from '../lib/composeSettlement';
+import { buildComposeProveWithdrawalArgs, getComposeWithdrawalStatus } from '../lib/composeSettlement';
 import { normalizeExecutionErrorMessage } from '../lib/errors';
 import { formatChainLabel } from '../lib/format';
 import { l2StandardBridgeAbi } from '../lib/l1Bridge';
@@ -41,6 +36,82 @@ type UseL2ReturnExecutionParams = {
 };
 
 const MAX_RETURN_HISTORY = 12;
+
+const composePortalSuperRootProveAbi = [
+  {
+    type: 'function',
+    name: 'proveWithdrawalTransaction',
+    stateMutability: 'nonpayable',
+    inputs: [
+      {
+        name: '_tx',
+        type: 'tuple',
+        components: [
+          { name: 'nonce', type: 'uint256' },
+          { name: 'sender', type: 'address' },
+          { name: 'target', type: 'address' },
+          { name: 'value', type: 'uint256' },
+          { name: 'gasLimit', type: 'uint256' },
+          { name: 'data', type: 'bytes' }
+        ]
+      },
+      { name: '_disputeGameProxy', type: 'address' },
+      { name: '_outputRootIndex', type: 'uint256' },
+      {
+        name: '_superRootProof',
+        type: 'tuple',
+        components: [
+          { name: 'version', type: 'bytes1' },
+          { name: 'timestamp', type: 'uint64' },
+          {
+            name: 'outputRoots',
+            type: 'tuple[]',
+            components: [
+              { name: 'chainId', type: 'uint256' },
+              { name: 'root', type: 'bytes32' }
+            ]
+          }
+        ]
+      },
+      {
+        name: '_outputRootProof',
+        type: 'tuple',
+        components: [
+          { name: 'version', type: 'bytes32' },
+          { name: 'stateRoot', type: 'bytes32' },
+          { name: 'messagePasserStorageRoot', type: 'bytes32' },
+          { name: 'latestBlockhash', type: 'bytes32' }
+        ]
+      },
+      { name: '_withdrawalProof', type: 'bytes[]' }
+    ],
+    outputs: []
+  }
+] as const;
+
+const composePortalFinalizeWithdrawalAbi = [
+  {
+    type: 'function',
+    name: 'finalizeWithdrawalTransactionExternalProof',
+    stateMutability: 'nonpayable',
+    inputs: [
+      {
+        name: '_tx',
+        type: 'tuple',
+        components: [
+          { name: 'nonce', type: 'uint256' },
+          { name: 'sender', type: 'address' },
+          { name: 'target', type: 'address' },
+          { name: 'value', type: 'uint256' },
+          { name: 'gasLimit', type: 'uint256' },
+          { name: 'data', type: 'bytes' }
+        ]
+      },
+      { name: '_proofSubmitter', type: 'address' }
+    ],
+    outputs: []
+  }
+] as const;
 
 type ReturnResultContext = Omit<
   ReturnResult,
@@ -455,28 +526,34 @@ export function useL2ReturnExecution({
         }
 
         setPhase('Building prove transaction...');
-        const proveGame = lifecycle.game;
-        if (!proveGame) {
+        if (!lifecycle.game) {
           throw new Error('Could not resolve an eligible Compose dispute game for this withdrawal yet.');
         }
 
-        const proveArgs = await buildProveWithdrawal(sourcePublicClient, {
-          game: proveGame,
-          withdrawal
+        const proveArgs = await buildComposeProveWithdrawalArgs({
+          sourcePublicClient,
+          l1PublicClient,
+          portalAddress: result.settlementContracts.l1PortalAddress,
+          disputeGameFactoryAddress: result.settlementContracts.l1DisputeGameFactoryAddress,
+          sourceChainId: result.sourceChainId,
+          game: lifecycle.game,
+          withdrawal,
+          withdrawalL2BlockNumber: receipt.blockNumber
         });
-        const proveArgsWithoutTargetChain = {
-          l2OutputIndex: proveArgs.l2OutputIndex,
-          outputRootProof: proveArgs.outputRootProof,
-          withdrawalProof: proveArgs.withdrawalProof,
-          withdrawal: proveArgs.withdrawal
-        };
 
         setPhase('Submitting prove transaction on L1...');
-        const proveTxHash = await proveWithdrawal(walletClient as never, {
-          ...proveArgsWithoutTargetChain,
-          chain: l1FundingConfig.chain,
-          portalAddress: result.settlementContracts.l1PortalAddress,
-          account: result.recipient
+        const proveTxHash = await walletClient.writeContract({
+          address: result.settlementContracts.l1PortalAddress,
+          abi: composePortalSuperRootProveAbi,
+          functionName: 'proveWithdrawalTransaction',
+          args: [
+            proveArgs.withdrawal,
+            proveArgs.disputeGameProxy,
+            proveArgs.outputRootIndex,
+            proveArgs.superRootProof,
+            proveArgs.outputRootProof,
+            proveArgs.withdrawalProof
+          ]
         });
 
         const l1ExplorerBase = l1FundingConfig.chain.blockExplorers?.default?.url;
@@ -592,11 +669,12 @@ export function useL2ReturnExecution({
         }
 
         setPhase('Submitting finalize transaction on L1...');
-        const finalizeTxHash = await finalizeWithdrawal(walletClient as never, {
-          withdrawal,
-          chain: l1FundingConfig.chain,
-          portalAddress: result.settlementContracts.l1PortalAddress,
-          account: result.recipient
+        const proofSubmitter = lifecycle.proofSubmitter ?? result.recipient;
+        const finalizeTxHash = await walletClient.writeContract({
+          address: result.settlementContracts.l1PortalAddress,
+          abi: composePortalFinalizeWithdrawalAbi,
+          functionName: 'finalizeWithdrawalTransactionExternalProof',
+          args: [withdrawal, proofSubmitter]
         });
 
         const l1ExplorerBase = l1FundingConfig.chain.blockExplorers?.default?.url;
