@@ -5,6 +5,7 @@ import {
   COMPOSE_SEND_TIMEOUT_MS,
   HASH_PRESENCE_POLL_ATTEMPTS,
   HASH_PRESENCE_POLL_INTERVAL_MS,
+  L2_TO_L2_USER_OP_GAS_OVERRIDES,
   RECEIPT_WAIT_TIMEOUT_MS,
   USER_OP_BUILD_TIMEOUT_MS
 } from './constants';
@@ -46,6 +47,34 @@ const entryPointEventsAbi = [
 ] as const;
 
 const MESSAGE_NOT_FOUND_SELECTOR = '0x28915ac7';
+
+const applyUserOpGasOverrides = <
+  T extends {
+    userOp: {
+      callGasLimit: bigint;
+      verificationGasLimit: bigint;
+      preVerificationGas: bigint;
+    };
+  }
+>(
+  operation: T,
+  role: keyof typeof L2_TO_L2_USER_OP_GAS_OVERRIDES
+): T => {
+  const overrides = L2_TO_L2_USER_OP_GAS_OVERRIDES[role];
+  if (!overrides.callGasLimit && !overrides.verificationGasLimit && !overrides.preVerificationGas) {
+    return operation;
+  }
+
+  return {
+    ...operation,
+    userOp: {
+      ...operation.userOp,
+      ...(overrides.callGasLimit ? { callGasLimit: overrides.callGasLimit } : {}),
+      ...(overrides.verificationGasLimit ? { verificationGasLimit: overrides.verificationGasLimit } : {}),
+      ...(overrides.preVerificationGas ? { preVerificationGas: overrides.preVerificationGas } : {})
+    }
+  };
+};
 
 const resolveUserOpOutcome = ({
   logs,
@@ -246,18 +275,46 @@ export const executeComposedBridgeFlow = async ({
   });
 
   setBridgePhase('Preparing source operation...');
-  const sourceUserOp = await withTimeout(
+  const sourceUserOpPrepared = await withTimeout(
     sourceSmartAccount.account.createUserOp(sourceCalls),
     USER_OP_BUILD_TIMEOUT_MS,
     'Timed out while building source UserOperation.'
   );
 
   setBridgePhase('Preparing destination operation...');
-  const destinationUserOp = await withTimeout(
+  const destinationUserOpPrepared = await withTimeout(
     destinationSmartAccount.account.createUserOp(destinationCalls),
     USER_OP_BUILD_TIMEOUT_MS,
     'Timed out while building destination UserOperation.'
   );
+
+  const sourceUserOp = applyUserOpGasOverrides(sourceUserOpPrepared, 'source');
+  const destinationUserOp = applyUserOpGasOverrides(destinationUserOpPrepared, 'destination');
+
+  console.info('[BridgeDebug] Prepared L2->L2 userOp gas', {
+    source: {
+      callGasLimit: sourceUserOp.userOp.callGasLimit.toString(),
+      verificationGasLimit: sourceUserOp.userOp.verificationGasLimit.toString(),
+      preVerificationGas: sourceUserOp.userOp.preVerificationGas.toString()
+    },
+    destination: {
+      callGasLimit: destinationUserOp.userOp.callGasLimit.toString(),
+      verificationGasLimit: destinationUserOp.userOp.verificationGasLimit.toString(),
+      preVerificationGas: destinationUserOp.userOp.preVerificationGas.toString()
+    },
+    overridesApplied: {
+      source: {
+        callGasLimit: L2_TO_L2_USER_OP_GAS_OVERRIDES.source.callGasLimit?.toString() ?? null,
+        verificationGasLimit: L2_TO_L2_USER_OP_GAS_OVERRIDES.source.verificationGasLimit?.toString() ?? null,
+        preVerificationGas: L2_TO_L2_USER_OP_GAS_OVERRIDES.source.preVerificationGas?.toString() ?? null
+      },
+      destination: {
+        callGasLimit: L2_TO_L2_USER_OP_GAS_OVERRIDES.destination.callGasLimit?.toString() ?? null,
+        verificationGasLimit: L2_TO_L2_USER_OP_GAS_OVERRIDES.destination.verificationGasLimit?.toString() ?? null,
+        preVerificationGas: L2_TO_L2_USER_OP_GAS_OVERRIDES.destination.preVerificationGas?.toString() ?? null
+      }
+    }
+  });
 
   setBridgePhase('Awaiting wallet signature and composing payload...');
   const composed = await withTimeout(
