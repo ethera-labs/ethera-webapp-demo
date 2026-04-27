@@ -87,7 +87,8 @@ export function useReturnScreenState({
     importCanonicalL1Token
   } = useCanonicalL1TokenImport({
     walletAddress,
-    l1FundingConfig
+    l1FundingConfig,
+    onImportError: onReturnError
   });
 
   const canonicalL1Erc20Tokens = useMemo(() => {

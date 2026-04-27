@@ -3,7 +3,6 @@ type TokenImportPanelProps = {
   toggleLabel: string;
   addressInput: string;
   isImporting: boolean;
-  importError: string | null;
   helperText: string;
   secondaryHelperText?: string;
   onToggle: () => void;
@@ -19,7 +18,6 @@ export function TokenImportPanel({
   toggleLabel,
   addressInput,
   isImporting,
-  importError,
   helperText,
   secondaryHelperText,
   onToggle,
@@ -59,7 +57,6 @@ export function TokenImportPanel({
           </div>
           <p className="hint">{helperText}</p>
           {secondaryHelperText ? <p className="hint">{secondaryHelperText}</p> : null}
-          {importError ? <p className="inline-error">{importError}</p> : null}
         </div>
       ) : null}
     </>

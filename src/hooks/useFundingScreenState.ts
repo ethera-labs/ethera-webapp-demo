@@ -87,7 +87,8 @@ export function useFundingScreenState({
     importCanonicalL1Token
   } = useCanonicalL1TokenImport({
     walletAddress,
-    l1FundingConfig
+    l1FundingConfig,
+    onImportError: onFundingError
   });
 
   const fundingTokens = useMemo(() => {

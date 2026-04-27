@@ -277,19 +277,25 @@ export function useBridgeScreenState({
 
   const importBridgeToken = useCallback(async () => {
     if (!walletAddress) {
-      setImportTokenError('Connect a wallet before importing tokens.');
+      const message = 'Connect a wallet before importing a rollup token.';
+      setImportTokenError(message);
+      onBridgeError(message);
       return undefined;
     }
 
     const candidateAddress = importTokenAddressInput.trim();
     if (!candidateAddress) {
-      setImportTokenError('Enter a token address to import.');
+      const message = 'Enter the token address on the current source rollup.';
+      setImportTokenError(message);
+      onBridgeError(message);
       return undefined;
     }
 
     const sourcePublicClient = composeConfig.getPublicClient(sourceChain.id);
     if (!sourcePublicClient) {
-      setImportTokenError(`Source rollup public client is not configured for chain ${sourceChain.id}.`);
+      const message = `Source rollup public client is not configured for chain ${sourceChain.id}.`;
+      setImportTokenError(message);
+      onBridgeError(message);
       return undefined;
     }
 
@@ -325,8 +331,12 @@ export function useBridgeScreenState({
 
       return importedToken;
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not import token from address.';
+      const rawMessage = error instanceof Error ? error.message : 'Could not import token from address.';
+      const message = rawMessage.toLowerCase().includes('valid evm address')
+        ? 'Enter a valid token address on the current source rollup.'
+        : 'Could not import token. Enter the token address on the current source rollup.';
       setImportTokenError(message);
+      onBridgeError(message);
       return undefined;
     } finally {
       setIsImportingToken(false);
@@ -334,6 +344,7 @@ export function useBridgeScreenState({
   }, [
     destinationBalanceQuery,
     importTokenAddressInput,
+    onBridgeError,
     sourceChain.id,
     sourceTokenBalancesQuery,
     walletAddress

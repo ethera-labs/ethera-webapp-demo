@@ -122,7 +122,6 @@ function App() {
     results,
     smartByChainId,
     importTokenAddressInput: bridgeImportTokenAddressInput,
-    importTokenError: bridgeImportTokenError,
     isImportingToken: isImportingBridgeToken,
     setSelectedTokenValue,
     setImportTokenAddressInput: setBridgeImportTokenAddressInput,
@@ -167,7 +166,6 @@ function App() {
     fundingResults,
     canSubmitFunding,
     importTokenAddressInput,
-    importTokenError,
     isImportingToken,
     setFundingDestinationChainId,
     setFundingAmountInput,
@@ -212,7 +210,6 @@ function App() {
     returnResults,
     canSubmitReturn,
     returnImportTokenAddressInput,
-    returnImportTokenError,
     isImportingReturnToken,
     setReturnSourceChainId,
     setReturnAmountInput,
@@ -521,7 +518,6 @@ function App() {
               toggleLabel={isBridgeImportOpen ? 'Hide import token' : 'Import token'}
               addressInput={bridgeImportTokenAddressInput}
               isImporting={isImportingBridgeToken}
-              importError={bridgeImportTokenError}
               helperText="Enter the token address on the current source rollup."
               onToggle={() => {
                 setIsBridgeImportOpen((current) => !current);
@@ -535,10 +531,6 @@ function App() {
             <p className="hint">
               Funds route from <strong>{sourceChain.name}</strong> to <strong>{destinationChain.name}</strong>.
             </p>
-            {selectedToken.kind === 'nativeEthViaWeth' ? (
-              <p className="hint">ETH mode enabled. Destination account receives native ETH.</p>
-            ) : null}
-
             <div className="bridge-summary">
               <p className="bridge-summary-tag">Balance</p>
               <div>
@@ -654,7 +646,6 @@ function App() {
               toggleLabel={isFundingImportOpen ? 'Hide import token' : 'Import token'}
               addressInput={importTokenAddressInput}
               isImporting={isImportingToken}
-              importError={importTokenError}
               helperText="Enter ERC-20 token address."
               onToggle={() => {
                 setIsFundingImportOpen((current) => !current);
@@ -794,7 +785,6 @@ function App() {
               toggleLabel={isReturnImportOpen ? 'Hide import token' : 'Import token'}
               addressInput={returnImportTokenAddressInput}
               isImporting={isImportingReturnToken}
-              importError={returnImportTokenError}
               helperText="Enter canonical L1 ERC-20 token address."
               secondaryHelperText="The app derives the withdrawable L2 counterpart automatically when available."
               onToggle={() => {
