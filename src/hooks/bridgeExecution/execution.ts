@@ -1,5 +1,6 @@
 import { composeUnpreparedUserOps } from '@ssv-labs/ethera-sdk';
 import { erc20Abi, parseEventLogs, type Log, type TransactionReceipt } from 'viem';
+import { MESSAGE_NOT_FOUND_SELECTOR } from '../../lib/universalL2L2Bridge';
 import {
   COMPOSE_BUILD_TIMEOUT_MS,
   COMPOSE_SEND_TIMEOUT_MS,
@@ -45,8 +46,6 @@ const entryPointEventsAbi = [
     ]
   }
 ] as const;
-
-const MESSAGE_NOT_FOUND_SELECTOR = '0x28915ac7';
 
 const applyUserOpGasOverrides = <
   T extends {
@@ -290,31 +289,6 @@ export const executeComposedBridgeFlow = async ({
 
   const sourceUserOp = applyUserOpGasOverrides(sourceUserOpPrepared, 'source');
   const destinationUserOp = applyUserOpGasOverrides(destinationUserOpPrepared, 'destination');
-
-  console.info('[BridgeDebug] Prepared L2->L2 userOp gas', {
-    source: {
-      callGasLimit: sourceUserOp.userOp.callGasLimit.toString(),
-      verificationGasLimit: sourceUserOp.userOp.verificationGasLimit.toString(),
-      preVerificationGas: sourceUserOp.userOp.preVerificationGas.toString()
-    },
-    destination: {
-      callGasLimit: destinationUserOp.userOp.callGasLimit.toString(),
-      verificationGasLimit: destinationUserOp.userOp.verificationGasLimit.toString(),
-      preVerificationGas: destinationUserOp.userOp.preVerificationGas.toString()
-    },
-    overridesApplied: {
-      source: {
-        callGasLimit: L2_TO_L2_USER_OP_GAS_OVERRIDES.source.callGasLimit?.toString() ?? null,
-        verificationGasLimit: L2_TO_L2_USER_OP_GAS_OVERRIDES.source.verificationGasLimit?.toString() ?? null,
-        preVerificationGas: L2_TO_L2_USER_OP_GAS_OVERRIDES.source.preVerificationGas?.toString() ?? null
-      },
-      destination: {
-        callGasLimit: L2_TO_L2_USER_OP_GAS_OVERRIDES.destination.callGasLimit?.toString() ?? null,
-        verificationGasLimit: L2_TO_L2_USER_OP_GAS_OVERRIDES.destination.verificationGasLimit?.toString() ?? null,
-        preVerificationGas: L2_TO_L2_USER_OP_GAS_OVERRIDES.destination.preVerificationGas?.toString() ?? null
-      }
-    }
-  });
 
   setBridgePhase('Awaiting wallet signature and composing payload...');
   const composed = await withTimeout(
