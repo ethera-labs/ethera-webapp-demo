@@ -36,6 +36,7 @@ const BASE_SUPPORTED_CHAIN_IDS = [chainA.id, chainB.id] as const;
 function App() {
   const [flowMode, setFlowMode] = useState<FlowMode>('bridge');
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
+  const [isBridgeImportOpen, setIsBridgeImportOpen] = useState(false);
   const [isFundingImportOpen, setIsFundingImportOpen] = useState(false);
   const [isReturnImportOpen, setIsReturnImportOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -95,7 +96,7 @@ function App() {
   const {
     sourceChainId,
     destinationChainId,
-    selectedTokenSymbol,
+    selectedTokenValue,
     amountInput,
     sourceChain,
     destinationChain,
@@ -120,7 +121,12 @@ function App() {
     clearBridgePhase,
     results,
     smartByChainId,
-    setSelectedTokenSymbol,
+    importTokenAddressInput: bridgeImportTokenAddressInput,
+    importTokenError: bridgeImportTokenError,
+    isImportingToken: isImportingBridgeToken,
+    setSelectedTokenValue,
+    setImportTokenAddressInput: setBridgeImportTokenAddressInput,
+    importBridgeToken,
     setAmountInput,
     handleSourceChainChange,
     handleDestinationChainChange,
@@ -256,6 +262,7 @@ function App() {
       setError(null);
       setSuccessNotice(null);
       setOpenMenu(null);
+      setIsBridgeImportOpen(false);
       setIsFundingImportOpen(false);
       setIsReturnImportOpen(false);
       closeDepositModal(clearBridgePhase);
@@ -269,6 +276,7 @@ function App() {
     setError(null);
     setSuccessNotice(null);
     setOpenMenu(null);
+    setIsBridgeImportOpen(false);
     setIsFundingImportOpen(false);
     setIsReturnImportOpen(false);
     closeDepositModal(clearBridgePhase);
@@ -466,7 +474,18 @@ function App() {
               </label>
 
               <label className="field">
-                <span>Token</span>
+                <span>
+                  Asset{' '}
+                  <span className="modal-help-wrap">
+                    <span className="modal-help" aria-hidden="true">
+                      ?
+                    </span>
+                    <span className="modal-help-tooltip" role="tooltip">
+                      Don&apos;t see your token? Click <strong>Import token</strong> below and paste the token
+                      address on the current source rollup.
+                    </span>
+                  </span>
+                </span>
                 <Picker
                   ariaLabel="Select token"
                   open={openMenu === 'token'}
@@ -474,11 +493,11 @@ function App() {
                   valueRight={selectedTokenDisplayBalance}
                   onToggle={() => setOpenMenu((prev) => (prev === 'token' ? null : 'token'))}
                   onSelect={(value) => {
-                    setSelectedTokenSymbol(value);
+                    setSelectedTokenValue(value);
                     setOpenMenu(null);
                   }}
                   options={tokenOptions}
-                  selectedValue={selectedTokenSymbol}
+                  selectedValue={selectedTokenValue}
                   className="picker-token"
                 />
               </label>
@@ -496,6 +515,22 @@ function App() {
                 />
               </label>
             </div>
+
+            <TokenImportPanel
+              isOpen={isBridgeImportOpen}
+              toggleLabel={isBridgeImportOpen ? 'Hide import token' : 'Import token'}
+              addressInput={bridgeImportTokenAddressInput}
+              isImporting={isImportingBridgeToken}
+              importError={bridgeImportTokenError}
+              helperText="Enter the token address on the current source rollup."
+              onToggle={() => {
+                setIsBridgeImportOpen((current) => !current);
+              }}
+              onAddressChange={setBridgeImportTokenAddressInput}
+              onImport={() => {
+                void importBridgeToken();
+              }}
+            />
 
             <p className="hint">
               Funds route from <strong>{sourceChain.name}</strong> to <strong>{destinationChain.name}</strong>.
@@ -570,7 +605,18 @@ function App() {
               </label>
 
               <label className="field">
-                <span>Asset</span>
+                <span>
+                  Asset{' '}
+                  <span className="modal-help-wrap">
+                    <span className="modal-help" aria-hidden="true">
+                      ?
+                    </span>
+                    <span className="modal-help-tooltip" role="tooltip">
+                      Don&apos;t see your token? Click <strong>Import token</strong> below and paste the canonical
+                      L1 ERC-20 address.
+                    </span>
+                  </span>
+                </span>
                 <Picker
                   ariaLabel="Select L1 funding token"
                   open={openMenu === 'fund-token'}
@@ -699,7 +745,18 @@ function App() {
               </label>
 
               <label className="field">
-                <span>Asset</span>
+                <span>
+                  Asset{' '}
+                  <span className="modal-help-wrap">
+                    <span className="modal-help" aria-hidden="true">
+                      ?
+                    </span>
+                    <span className="modal-help-tooltip" role="tooltip">
+                      Don&apos;t see your token? Click <strong>Import token</strong> below and paste the canonical
+                      L1 ERC-20 address.
+                    </span>
+                  </span>
+                </span>
                 <Picker
                   ariaLabel="Select return asset"
                   open={openMenu === 'return-token'}
