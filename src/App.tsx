@@ -1,20 +1,32 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { chainA, chainB, composeConfig, l1FundingConfig, networkProfile } from './composeConfig';
 import { DepositTopUpModal } from './components/DepositTopUpModal';
+import { FlowBalanceSummary } from './components/FlowBalanceSummary';
 import { FundingOutput } from './components/FundingOutput';
 import { Picker } from './components/Picker';
+import { ReturnOutput } from './components/ReturnOutput';
+import { TokenImportPanel } from './components/TokenImportPanel';
 import { TransactionOutput } from './components/TransactionOutput';
 import { WalletPanel } from './components/WalletPanel';
 import { formatTokenAmount } from './lib/format';
 import { useBridgeScreenState } from './hooks/useBridgeScreenState';
 import { useDepositTopUpOrchestration } from './hooks/useDepositTopUpOrchestration';
 import { useFundingScreenState } from './hooks/useFundingScreenState';
+import { useReturnScreenState } from './hooks/useReturnScreenState';
 import { useWalletOrchestration } from './hooks/useWalletOrchestration';
 import './App.css';
 
 // Root container that wires bridge/funding orchestration hooks into the UI.
-type OpenMenu = 'source' | 'destination' | 'token' | 'fund-destination' | null;
-type FlowMode = 'bridge' | 'fund';
+type OpenMenu =
+  | 'source'
+  | 'destination'
+  | 'token'
+  | 'fund-destination'
+  | 'fund-token'
+  | 'return-source'
+  | 'return-token'
+  | null;
+type FlowMode = 'bridge' | 'fund' | 'return';
 
 const BASE_SUPPORTED_CHAIN_IDS = [chainA.id, chainB.id] as const;
 
@@ -24,6 +36,9 @@ const BASE_SUPPORTED_CHAIN_IDS = [chainA.id, chainB.id] as const;
 function App() {
   const [flowMode, setFlowMode] = useState<FlowMode>('bridge');
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
+  const [isBridgeImportOpen, setIsBridgeImportOpen] = useState(false);
+  const [isFundingImportOpen, setIsFundingImportOpen] = useState(false);
+  const [isReturnImportOpen, setIsReturnImportOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
   const dropdownAreaRef = useRef<HTMLDivElement | null>(null);
@@ -81,7 +96,7 @@ function App() {
   const {
     sourceChainId,
     destinationChainId,
-    selectedTokenSymbol,
+    selectedTokenValue,
     amountInput,
     sourceChain,
     destinationChain,
@@ -98,6 +113,7 @@ function App() {
     destinationBalanceQuery,
     accountsLoading,
     sourceBalancesLoading,
+    bridgeDisabledReason,
     canSubmitBridge,
     executeBridge,
     isSubmitting,
@@ -105,7 +121,11 @@ function App() {
     clearBridgePhase,
     results,
     smartByChainId,
-    setSelectedTokenSymbol,
+    importTokenAddressInput: bridgeImportTokenAddressInput,
+    isImportingToken: isImportingBridgeToken,
+    setSelectedTokenValue,
+    setImportTokenAddressInput: setBridgeImportTokenAddressInput,
+    importBridgeToken,
     setAmountInput,
     handleSourceChainChange,
     handleDestinationChainChange,
@@ -125,21 +145,33 @@ function App() {
     fundingDestinationChainId,
     fundingAmountInput,
     fundingDestinationChain,
+    fundingTokenValue,
+    selectedFundingToken,
+    selectedFundingSourceBalance,
+    selectedFundingDestinationDisplayBalance,
+    selectedFundingTokenDisplayBalance,
     selectedFundingSourceChainLabel,
     selectedFundingDestinationChainLabel,
     selectedFundingSourceChainName,
     selectedFundingDestinationChainName,
     fundingDestinationOptions,
-    l1NativeBalance,
+    fundingTokenOptions,
     l1NativeBalanceQuery,
+    l1TokenBalancesQuery,
+    destinationFundingBalanceQuery,
     executeFunding,
     isFundingSubmitting,
     fundingPhase,
     clearFundingPhase,
     fundingResults,
     canSubmitFunding,
+    importTokenAddressInput,
+    isImportingToken,
     setFundingDestinationChainId,
     setFundingAmountInput,
+    setFundingTokenValue,
+    setImportTokenAddressInput,
+    importFundingToken,
     resetFundingForm
   } = useFundingScreenState({
     walletAddress,
@@ -147,6 +179,50 @@ function App() {
     ensureWalletOnChain,
     onClearErrors: clearErrors,
     onFundingError: showError
+  });
+
+  const {
+    returnSourceChainId,
+    returnAmountInput,
+    returnTokenValue,
+    returnSourceChain,
+    selectedReturnToken,
+    selectedReturnTokenDisplayBalance,
+    selectedReturnDestinationDisplayBalance,
+    selectedReturnSourceChainLabel,
+    selectedReturnDestinationChainLabel,
+    selectedReturnSourceChainName,
+    selectedReturnDestinationChainName,
+    returnSourceOptions,
+    returnTokenOptions,
+    returnNativeBalanceQuery,
+    l1NativeBalanceQuery: returnL1NativeBalanceQuery,
+    returnErc20AssetsQuery,
+    resolvedL2BridgeAddress,
+    returnRouteQuery,
+    settlementContracts,
+    executeReturn,
+    proveReturn,
+    finalizeReturn,
+    isReturnSubmitting,
+    returnPhase,
+    clearReturnPhase,
+    returnResults,
+    canSubmitReturn,
+    returnImportTokenAddressInput,
+    isImportingReturnToken,
+    setReturnSourceChainId,
+    setReturnAmountInput,
+    setReturnTokenValue,
+    setReturnImportTokenAddressInput,
+    importReturnToken,
+    resetReturnForm
+  } = useReturnScreenState({
+    walletAddress,
+    isConnected,
+    ensureWalletOnChain,
+    onClearErrors: clearErrors,
+    onReturnError: showError
   });
 
   useEffect(() => {
@@ -168,30 +244,58 @@ function App() {
     void switchWalletToChain(sourceChainId);
   }, [isConnected, sourceChainId, supportedChainIds, switchWalletToChain, walletChainId]);
 
+  const handleFinalizeReturn = useCallback(async (sessionId: bigint) => {
+    const didFinalize = await finalizeReturn(sessionId);
+    if (didFinalize) {
+      setSuccessNotice('L1 finalization complete. Returned assets should now be visible in your L1 wallet balance.');
+    }
+
+    return didFinalize;
+  }, [finalizeReturn]);
+
   const handleFlowModeChange = useCallback(
     (nextFlowMode: FlowMode) => {
       setFlowMode(nextFlowMode);
       setError(null);
       setSuccessNotice(null);
       setOpenMenu(null);
+      setIsBridgeImportOpen(false);
+      setIsFundingImportOpen(false);
+      setIsReturnImportOpen(false);
       closeDepositModal(clearBridgePhase);
       clearFundingPhase();
+      clearReturnPhase();
     },
-    [clearBridgePhase, clearFundingPhase, closeDepositModal]
+    [clearBridgePhase, clearFundingPhase, clearReturnPhase, closeDepositModal]
   );
 
   const handleDisconnect = useCallback(async () => {
     setError(null);
     setSuccessNotice(null);
     setOpenMenu(null);
+    setIsBridgeImportOpen(false);
+    setIsFundingImportOpen(false);
+    setIsReturnImportOpen(false);
     closeDepositModal(clearBridgePhase);
     clearFundingPhase();
+    clearReturnPhase();
     resetBridgeForm();
     resetFundingForm();
+    resetReturnForm();
     await disconnectWallet();
-  }, [clearBridgePhase, clearFundingPhase, closeDepositModal, disconnectWallet, resetBridgeForm, resetFundingForm]);
+  }, [
+    clearBridgePhase,
+    clearFundingPhase,
+    clearReturnPhase,
+    closeDepositModal,
+    disconnectWallet,
+    resetBridgeForm,
+    resetFundingForm,
+    resetReturnForm
+  ]);
 
   const activeFlowMode: FlowMode = l1FundingConfig ? flowMode : 'bridge';
+  const isBridgeFlowEnabled = bridgeDisabledReason === null;
 
   if (!selectedToken) {
     return (
@@ -242,8 +346,8 @@ function App() {
         <div>
           <h2>One-click cross-rollup token movement</h2>
           <p>
-            This demo builds two chain-specific user operations, composes them into one cross-rollup payload, and submits
-            them atomically with the Ethera SDK.
+            This demo builds source and destination user operations up front and submits one composed cross-rollup payload
+            with the Ethera SDK.
           </p>
         </div>
         <WalletPanel
@@ -265,7 +369,13 @@ function App() {
         {error ? (
           <div className="status-banner status-banner-error" role="alert" aria-live="polite">
             <div>
-              <p className="status-banner-title">{activeFlowMode === 'fund' ? 'Funding failed' : 'Bridge failed'}</p>
+              <p className="status-banner-title">
+                {activeFlowMode === 'fund'
+                  ? 'Funding failed'
+                  : activeFlowMode === 'return'
+                    ? 'Return bridge failed'
+                    : 'Bridge failed'}
+              </p>
               <p className="status-banner-message">{error}</p>
             </div>
             <button type="button" className="status-banner-close" aria-label="Dismiss error" onClick={() => setError(null)}>
@@ -277,7 +387,7 @@ function App() {
         {successNotice && !error ? (
           <div className="status-banner status-banner-success" role="status" aria-live="polite">
             <div>
-              <p className="status-banner-title">Funding complete</p>
+              <p className="status-banner-title">Operation complete</p>
               <p className="status-banner-message">{successNotice}</p>
             </div>
             <button
@@ -298,6 +408,7 @@ function App() {
               role="tab"
               aria-selected={activeFlowMode === 'bridge'}
               className={`flow-toggle-btn ${activeFlowMode === 'bridge' ? 'flow-toggle-btn-active' : ''}`}
+              disabled={!isBridgeFlowEnabled}
               onClick={() => handleFlowModeChange('bridge')}
             >
               Rollup Bridge
@@ -311,11 +422,21 @@ function App() {
             >
               L1 to Rollup Bridge
             </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeFlowMode === 'return'}
+              className={`flow-toggle-btn ${activeFlowMode === 'return' ? 'flow-toggle-btn-active' : ''}`}
+              onClick={() => handleFlowModeChange('return')}
+            >
+              Rollup to L1 Bridge
+            </button>
           </div>
         ) : null}
 
         {activeFlowMode === 'bridge' ? (
-          <>
+          isBridgeFlowEnabled ? (
+            <>
             <div className="grid" ref={dropdownAreaRef}>
               <label className="field">
                 <span>Source</span>
@@ -350,7 +471,18 @@ function App() {
               </label>
 
               <label className="field">
-                <span>Token</span>
+                <span>
+                  Asset{' '}
+                  <span className="modal-help-wrap">
+                    <span className="modal-help" aria-hidden="true">
+                      ?
+                    </span>
+                    <span className="modal-help-tooltip" role="tooltip">
+                      Don&apos;t see your token? Click <strong>Import token</strong> below and paste the token
+                      address on the current source rollup.
+                    </span>
+                  </span>
+                </span>
                 <Picker
                   ariaLabel="Select token"
                   open={openMenu === 'token'}
@@ -358,11 +490,11 @@ function App() {
                   valueRight={selectedTokenDisplayBalance}
                   onToggle={() => setOpenMenu((prev) => (prev === 'token' ? null : 'token'))}
                   onSelect={(value) => {
-                    setSelectedTokenSymbol(value);
+                    setSelectedTokenValue(value);
                     setOpenMenu(null);
                   }}
                   options={tokenOptions}
-                  selectedValue={selectedTokenSymbol}
+                  selectedValue={selectedTokenValue}
                   className="picker-token"
                 />
               </label>
@@ -381,13 +513,24 @@ function App() {
               </label>
             </div>
 
+            <TokenImportPanel
+              isOpen={isBridgeImportOpen}
+              toggleLabel={isBridgeImportOpen ? 'Hide import token' : 'Import token'}
+              addressInput={bridgeImportTokenAddressInput}
+              isImporting={isImportingBridgeToken}
+              helperText="Enter the token address on the current source rollup."
+              onToggle={() => {
+                setIsBridgeImportOpen((current) => !current);
+              }}
+              onAddressChange={setBridgeImportTokenAddressInput}
+              onImport={() => {
+                void importBridgeToken();
+              }}
+            />
+
             <p className="hint">
               Funds route from <strong>{sourceChain.name}</strong> to <strong>{destinationChain.name}</strong>.
             </p>
-            {selectedToken.kind === 'nativeEthViaWeth' ? (
-              <p className="hint">ETH mode enabled. Destination account receives native ETH.</p>
-            ) : null}
-
             <div className="bridge-summary">
               <p className="bridge-summary-tag">Balance</p>
               <div>
@@ -421,8 +564,15 @@ function App() {
             {networkProfile.paymasterByChainId ? <p className="hint hint-success">Paymaster enabled</p> : null}
             {accountsLoading ? <p className="hint">Creating smart accounts on both chains...</p> : null}
             {sourceBalancesLoading ? <p className="hint">Checking source balances...</p> : null}
-          </>
-        ) : (
+            </>
+          ) : (
+            <>
+              <p className="hint hint-warning">
+                {bridgeDisabledReason}
+              </p>
+            </>
+          )
+        ) : activeFlowMode === 'fund' ? (
           <>
             <div className="grid" ref={dropdownAreaRef}>
               <label className="field">
@@ -447,12 +597,35 @@ function App() {
               </label>
 
               <label className="field">
-                <span>Recipient</span>
-                <input className="readonly-input mono" value={walletAddress ?? 'Connect wallet first'} readOnly />
+                <span>
+                  Asset{' '}
+                  <span className="modal-help-wrap">
+                    <span className="modal-help" aria-hidden="true">
+                      ?
+                    </span>
+                    <span className="modal-help-tooltip" role="tooltip">
+                      Don&apos;t see your token? Click <strong>Import token</strong> below and paste the canonical
+                      L1 ERC-20 address.
+                    </span>
+                  </span>
+                </span>
+                <Picker
+                  ariaLabel="Select L1 funding token"
+                  open={openMenu === 'fund-token'}
+                  valueLeft={selectedFundingToken.symbol}
+                  valueRight={selectedFundingTokenDisplayBalance}
+                  onToggle={() => setOpenMenu((prev) => (prev === 'fund-token' ? null : 'fund-token'))}
+                  onSelect={(value) => {
+                    setFundingTokenValue(value);
+                    setOpenMenu(null);
+                  }}
+                  options={fundingTokenOptions}
+                  selectedValue={fundingTokenValue}
+                />
               </label>
 
               <label className="field">
-                <span>ETH amount</span>
+                <span>{selectedFundingToken.symbol} amount</span>
                 <input
                   className="amount-input"
                   value={fundingAmountInput}
@@ -461,36 +634,62 @@ function App() {
                   placeholder="0.01"
                 />
               </label>
+
+              <label className="field funding-recipient-field">
+                <span>Recipient</span>
+                <div className="readonly-input funding-recipient-display mono">{walletAddress ?? 'Connect wallet first'}</div>
+              </label>
             </div>
+
+            <TokenImportPanel
+              isOpen={isFundingImportOpen}
+              toggleLabel={isFundingImportOpen ? 'Hide import token' : 'Import token'}
+              addressInput={importTokenAddressInput}
+              isImporting={isImportingToken}
+              helperText="Enter ERC-20 token address."
+              onToggle={() => {
+                setIsFundingImportOpen((current) => !current);
+              }}
+              onAddressChange={setImportTokenAddressInput}
+              onImport={() => {
+                void importFundingToken();
+              }}
+            />
 
             <p className="hint">
-              Send native ETH from <strong>{selectedFundingSourceChainName}</strong> to <strong>{selectedFundingDestinationChainName}</strong>.
+              Send <strong>{selectedFundingToken.symbol}</strong> from <strong>{selectedFundingSourceChainName}</strong> to{' '}
+              <strong>{selectedFundingDestinationChainName}</strong>.
             </p>
 
-            <div className="bridge-summary">
-              <p className="bridge-summary-tag">Balance</p>
-              <div>
-                <p className="summary-title">L1 Balance</p>
-                <p className="summary-value">{formatTokenAmount(l1NativeBalance, 18)} ETH</p>
-              </div>
-              <div>
-                <p className="summary-title">L1 Bridge Contract</p>
-                <p className="summary-value mono">
-                  {l1FundingConfig?.bridgeByDestinationChainId[fundingDestinationChain.id] &&
-                  l1FundingConfig?.chain.blockExplorers?.default?.url ? (
-                    <a
-                      href={`${l1FundingConfig.chain.blockExplorers.default.url.replace(/\/$/, '')}/address/${l1FundingConfig.bridgeByDestinationChainId[fundingDestinationChain.id]}`}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {l1FundingConfig.bridgeByDestinationChainId[fundingDestinationChain.id]}
-                    </a>
-                  ) : (
-                    l1FundingConfig?.bridgeByDestinationChainId[fundingDestinationChain.id] ?? 'Not configured'
-                  )}
-                </p>
-              </div>
-            </div>
+            <FlowBalanceSummary
+              rows={[
+                {
+                  title: 'L1 Balance',
+                  value: `${formatTokenAmount(selectedFundingSourceBalance, selectedFundingToken.decimals)} ${selectedFundingToken.symbol}`
+                },
+                {
+                  title: 'L1 Bridge Contract',
+                  mono: true,
+                  value:
+                    l1FundingConfig?.bridgeByDestinationChainId[fundingDestinationChain.id] &&
+                    l1FundingConfig?.chain.blockExplorers?.default?.url ? (
+                      <a
+                        href={`${l1FundingConfig.chain.blockExplorers.default.url.replace(/\/$/, '')}/address/${l1FundingConfig.bridgeByDestinationChainId[fundingDestinationChain.id]}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {l1FundingConfig.bridgeByDestinationChainId[fundingDestinationChain.id]}
+                      </a>
+                    ) : (
+                      l1FundingConfig?.bridgeByDestinationChainId[fundingDestinationChain.id] ?? 'Not configured'
+                    )
+                },
+                {
+                  title: 'Destination Rollup Balance',
+                  value: `${selectedFundingDestinationDisplayBalance} ${selectedFundingToken.symbol}`
+                }
+              ]}
+            />
 
             <button
               className={`btn btn-primary big ${isFundingSubmitting ? 'btn-loading' : ''}`}
@@ -500,20 +699,178 @@ function App() {
                 void executeFunding();
               }}
             >
-              <span className="btn-label">{isFundingSubmitting ? 'Submitting L1 funding...' : 'Fund Rollup from L1'}</span>
+              <span className="btn-label">{isFundingSubmitting ? 'Submitting L1 bridge transaction...' : 'Bridge'}</span>
             </button>
             {isFundingSubmitting && fundingPhase ? <p className="hint">{fundingPhase}</p> : null}
 
-            {!isConnected ? <p className="hint">Connect a wallet to fund rollups from L1.</p> : null}
+            {!isConnected ? <p className="hint">Connect a wallet to bridge assets from L1 to a rollup.</p> : null}
             {!l1FundingConfig ? (
-              <p className="hint">L1 funding is not configured. Set L1 bridge env vars to enable this flow.</p>
+              <p className="hint">L1 bridge is not configured. Set L1 bridge env vars to enable this flow.</p>
             ) : null}
             {l1NativeBalanceQuery.isLoading ? <p className="hint">Checking L1 balance...</p> : null}
+            {l1TokenBalancesQuery.isLoading ? <p className="hint">Checking L1 token balances...</p> : null}
+            {destinationFundingBalanceQuery.isLoading ? <p className="hint">Checking destination rollup balance...</p> : null}
+          </>
+        ) : (
+          <>
+            <div className="grid" ref={dropdownAreaRef}>
+              <label className="field">
+                <span>Source Rollup</span>
+                <Picker
+                  ariaLabel="Select return source rollup"
+                  open={openMenu === 'return-source'}
+                  valueLeft={selectedReturnSourceChainLabel}
+                  onToggle={() => setOpenMenu((prev) => (prev === 'return-source' ? null : 'return-source'))}
+                  onSelect={(value) => {
+                    setReturnSourceChainId(value);
+                    setOpenMenu(null);
+                  }}
+                  options={returnSourceOptions}
+                  selectedValue={returnSourceChainId}
+                />
+              </label>
+
+              <label className="field">
+                <span>Destination (L1)</span>
+                <input className="readonly-input" value={selectedReturnDestinationChainLabel} readOnly />
+              </label>
+
+              <label className="field">
+                <span>
+                  Asset{' '}
+                  <span className="modal-help-wrap">
+                    <span className="modal-help" aria-hidden="true">
+                      ?
+                    </span>
+                    <span className="modal-help-tooltip" role="tooltip">
+                      Don&apos;t see your token? Click <strong>Import token</strong> below and paste the canonical
+                      L1 ERC-20 address.
+                    </span>
+                  </span>
+                </span>
+                <Picker
+                  ariaLabel="Select return asset"
+                  open={openMenu === 'return-token'}
+                  valueLeft={selectedReturnToken.symbol}
+                  valueRight={selectedReturnTokenDisplayBalance}
+                  onToggle={() => setOpenMenu((prev) => (prev === 'return-token' ? null : 'return-token'))}
+                  onSelect={(value) => {
+                    setReturnTokenValue(value);
+                    setOpenMenu(null);
+                  }}
+                  options={returnTokenOptions}
+                  selectedValue={returnTokenValue}
+                />
+              </label>
+
+              <label className="field">
+                <span>{selectedReturnToken.symbol} amount</span>
+                <input
+                  className="amount-input"
+                  value={returnAmountInput}
+                  onChange={(event) => setReturnAmountInput(event.target.value)}
+                  inputMode="decimal"
+                  placeholder="0.01"
+                />
+              </label>
+
+              <label className="field funding-recipient-field">
+                <span>Recipient</span>
+                <div className="readonly-input funding-recipient-display mono">{walletAddress ?? 'Connect wallet first'}</div>
+              </label>
+            </div>
+
+            <TokenImportPanel
+              isOpen={isReturnImportOpen}
+              toggleLabel={isReturnImportOpen ? 'Hide import token' : 'Import token'}
+              addressInput={returnImportTokenAddressInput}
+              isImporting={isImportingReturnToken}
+              helperText="Enter canonical L1 ERC-20 token address."
+              secondaryHelperText="The app derives the withdrawable L2 counterpart automatically when available."
+              onToggle={() => {
+                setIsReturnImportOpen((current) => !current);
+              }}
+              onAddressChange={setReturnImportTokenAddressInput}
+              onImport={() => {
+                void importReturnToken();
+              }}
+            />
+
+            <p className="hint">
+              Withdraw <strong>{selectedReturnToken.symbol}</strong> from <strong>{selectedReturnSourceChainName}</strong>{' '}
+              to{' '}
+              <strong>{selectedReturnDestinationChainName}</strong>.
+            </p>
+
+            <FlowBalanceSummary
+              rows={[
+                {
+                  title: 'Source Rollup Balance',
+                  value: `${selectedReturnTokenDisplayBalance} ${selectedReturnToken.symbol}`
+                },
+                {
+                  title: 'L2 Bridge Contract',
+                  mono: true,
+                  value:
+                    resolvedL2BridgeAddress && returnSourceChain.blockExplorers?.default?.url ? (
+                      <a
+                        href={`${returnSourceChain.blockExplorers.default.url.replace(/\/$/, '')}/address/${resolvedL2BridgeAddress}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {resolvedL2BridgeAddress}
+                      </a>
+                    ) : (
+                      resolvedL2BridgeAddress ?? 'Resolving bridge counterpart...'
+                    )
+                },
+                {
+                  title: 'L1 Balance',
+                  value: `${selectedReturnDestinationDisplayBalance} ${selectedReturnToken.symbol}`
+                }
+              ]}
+            />
+
+            <button
+              className={`btn btn-primary big ${isReturnSubmitting ? 'btn-loading' : ''}`}
+              disabled={!canSubmitReturn}
+              aria-busy={isReturnSubmitting}
+              onClick={() => {
+                void executeReturn();
+              }}
+            >
+              <span className="btn-label">
+                {isReturnSubmitting ? 'Submitting rollup withdrawal...' : `Bridge ${selectedReturnToken.symbol} Back to L1`}
+              </span>
+            </button>
+            {isReturnSubmitting && returnPhase ? <p className="hint">{returnPhase}</p> : null}
+
+            {!isConnected ? <p className="hint">Connect a wallet to bridge assets back to L1.</p> : null}
+            {returnRouteQuery.isLoading ? <p className="hint">Resolving return route...</p> : null}
+            {returnRouteQuery.isError ? (
+              <p className="hint hint-warning">
+                Could not resolve return route for selected rollup. Check universal return-route configuration.
+              </p>
+            ) : null}
+            {settlementContracts ? <p className="hint">L1 settlement contracts resolved and ready for prove/finalize.</p> : null}
+            {returnNativeBalanceQuery.isLoading ? <p className="hint">Checking source rollup ETH balance...</p> : null}
+            {returnL1NativeBalanceQuery.isLoading ? <p className="hint">Checking L1 ETH balance...</p> : null}
+            {returnErc20AssetsQuery.isLoading ? <p className="hint">Resolving withdrawable ERC-20 return assets...</p> : null}
           </>
         )}
       </section>
 
-      {activeFlowMode === 'bridge' ? <TransactionOutput results={results} /> : <FundingOutput results={fundingResults} />}
+      {activeFlowMode === 'bridge' ? (
+        <TransactionOutput results={results} />
+      ) : activeFlowMode === 'fund' ? (
+        <FundingOutput results={fundingResults} />
+      ) : (
+        <ReturnOutput
+          results={returnResults}
+          onProve={proveReturn}
+          onFinalize={handleFinalizeReturn}
+        />
+      )}
     </main>
   );
 }

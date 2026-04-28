@@ -209,6 +209,22 @@ h1 {
   color: #2f3e59;
 }
 
+.funding-recipient-field {
+  grid-column: 1 / -1;
+}
+
+.funding-recipient-display {
+  border: 1px solid var(--compose-line);
+  border-radius: 0.72rem;
+  background: #f6f8fc;
+  color: #2f3e59;
+  padding: 0.72rem 0.8rem;
+  min-height: 46px;
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .picker {
   position: relative;
 }
@@ -429,6 +445,27 @@ h1 {
   width: 100%;
   padding: 0.88rem 1rem;
   font-size: 1rem;
+}
+
+.btn-compact {
+  padding: 0.52rem 0.78rem;
+  font-size: 0.82rem;
+  min-height: 40px;
+}
+
+.funding-import-toggle-row {
+  margin-top: 0.8rem;
+}
+
+.funding-import-panel {
+  margin-top: 0.75rem;
+}
+
+.funding-import-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: end;
+  gap: 0.7rem;
 }
 
 .hint {
@@ -833,6 +870,13 @@ h1 {
   border-top: 1px solid rgba(13, 26, 45, 0.12);
 }
 
+.return-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-top: 0.25rem;
+}
+
 .tx-label {
   font-size: 0.81rem;
   font-weight: 600;
@@ -900,5 +944,9 @@ h1 {
   .tx-hash {
     margin-left: 0;
     text-align: left;
+  }
+
+  .funding-import-row {
+    grid-template-columns: 1fr;
   }
 }

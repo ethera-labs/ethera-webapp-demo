@@ -2,8 +2,11 @@ import { useQuery } from '@tanstack/react-query';
 import { useSmartAccount } from '@ssv-labs/ethera-sdk/react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { erc20Abi } from 'viem';
-import { chainA, chainB, bridgeAddress, composeConfig, demoTokens, networkProfile, type DemoToken } from '../composeConfig';
+import { chainA, chainB, composeConfig, demoTokens, networkProfile, universalContracts, type DemoToken } from '../composeConfig';
+import { dedupeErc20TokensByAddress, getAssetValue } from '../lib/assets';
 import { formatChainLabel, formatTokenAmount } from '../lib/format';
+import { readImportedTokens, resolveImportedTokenMetadata, upsertImportedToken } from '../lib/importedTokens';
+import { resolveDestinationPayoutTokenAddress, resolveSourceTokenBridgeMode } from './bridgeExecution';
 import { useBridgeExecution } from './useBridgeExecution';
 import type { PickerOption } from '../components/Picker';
 import type { DepositRequirement } from '../types/deposit';
@@ -24,6 +27,7 @@ type UseBridgeScreenStateParams = {
 const AVAILABLE_CHAINS = [chainA, chainB] as const;
 const CHAIN_IDS = [chainA.id, chainB.id] as [number, number];
 const getOppositeChainId = (chainId: number) => (chainId === chainA.id ? chainB.id : chainA.id);
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as const;
 
 /**
  * Prepares all bridge screen view-model state while delegating execution to useBridgeExecution.
@@ -40,10 +44,26 @@ export function useBridgeScreenState({
 }: UseBridgeScreenStateParams) {
   const [sourceChainId, setSourceChainId] = useState<number>(chainA.id);
   const [destinationChainId, setDestinationChainId] = useState<number>(chainB.id);
-  const [selectedTokenSymbol, setSelectedTokenSymbol] = useState<DemoToken['symbol']>(() => demoTokens[0]?.symbol ?? '');
+  const nativeBridgeToken = useMemo<DemoToken>(
+    () =>
+      demoTokens.find((token) => token.kind === 'nativeEthViaWeth') ?? {
+        symbol: 'ETH',
+        address: ZERO_ADDRESS,
+        decimals: 18,
+        kind: 'nativeEthViaWeth'
+      },
+    []
+  );
+  const curatedErc20BridgeTokens = useMemo(() => demoTokens.filter((token) => token.kind === 'erc20'), []);
+  const [selectedTokenValue, setSelectedTokenValue] = useState<string>(() => getAssetValue(nativeBridgeToken));
   const [amountInput, setAmountInput] = useState('');
+  const [importTokenAddressInput, setImportTokenAddressInput] = useState('');
+  const [importTokenError, setImportTokenError] = useState<string | null>(null);
+  const [isImportingToken, setIsImportingToken] = useState(false);
+  const [importedTokens, setImportedTokens] = useState<DemoToken[]>([]);
 
   const entryPointAddress = composeConfig.entryPoint.address as `0x${string}`;
+  const universalBridgeAddress = universalContracts?.l2ToL2Bridge;
 
   const smartAccountAQuery = useSmartAccount({ chainId: chainA.id, multiChainIds: CHAIN_IDS });
   const smartAccountBQuery = useSmartAccount({ chainId: chainB.id, multiChainIds: CHAIN_IDS });
@@ -65,16 +85,56 @@ export function useBridgeScreenState({
 
   const sharedSmartAccountAddress = smartAccountAQuery.data?.account.address;
 
+  useEffect(() => {
+    if (!walletAddress) {
+      setImportedTokens([]);
+      return;
+    }
+
+    const storedTokens = readImportedTokens({
+      networkMode: networkProfile.mode,
+      chainId: sourceChain.id,
+      walletAddress
+    }).map((token) => ({
+      ...token,
+      kind: 'erc20' as const
+    }));
+
+    setImportedTokens(storedTokens);
+  }, [sourceChain.id, walletAddress]);
+
+  const bridgeTokens = useMemo(() => {
+    const dedupedErc20Tokens = dedupeErc20TokensByAddress([...curatedErc20BridgeTokens, ...importedTokens]);
+    return [nativeBridgeToken, ...dedupedErc20Tokens];
+  }, [curatedErc20BridgeTokens, importedTokens, nativeBridgeToken]);
+
+  useEffect(() => {
+    if (bridgeTokens.length === 0) return;
+    if (bridgeTokens.some((token) => getAssetValue(token) === selectedTokenValue)) return;
+    setSelectedTokenValue(getAssetValue(bridgeTokens[0]));
+  }, [bridgeTokens, selectedTokenValue]);
+
   const selectedToken = useMemo(
-    () => demoTokens.find((token) => token.symbol === selectedTokenSymbol) ?? demoTokens[0],
-    [selectedTokenSymbol]
+    () => bridgeTokens.find((token) => getAssetValue(token) === selectedTokenValue) ?? bridgeTokens[0],
+    [bridgeTokens, selectedTokenValue]
   );
 
   const selectedSourceChainLabel = formatChainLabel(sourceChain.name, sourceChain.id);
   const selectedDestinationChainLabel = formatChainLabel(destinationChain.name, destinationChain.id);
 
+  const bridgeErc20Tokens = useMemo(
+    () => bridgeTokens.filter((token) => token.kind === 'erc20'),
+    [bridgeTokens]
+  );
+
   const sourceTokenBalancesQuery = useQuery({
-    queryKey: ['source-token-balances', sourceChain.id, sharedSmartAccountAddress, walletAddress],
+    queryKey: [
+      'source-token-balances',
+      sourceChain.id,
+      sharedSmartAccountAddress,
+      walletAddress,
+      bridgeErc20Tokens.map((token) => token.address.toLowerCase()).join(',')
+    ],
     enabled: Boolean(sourceSmart?.publicClient && sharedSmartAccountAddress && walletAddress),
     queryFn: async () => {
       const smart = sourceSmart;
@@ -85,9 +145,8 @@ export function useBridgeScreenState({
         throw new Error('Source smart account is not ready yet.');
       }
 
-      const erc20Tokens = demoTokens.filter((token) => token.kind === 'erc20');
       const entries = await Promise.all(
-        erc20Tokens.map(async (token) => {
+        bridgeErc20Tokens.map(async (token) => {
           const [smartBalance, eoaBalance] = await Promise.all([
             smart.publicClient.readContract({
               address: token.address,
@@ -102,7 +161,7 @@ export function useBridgeScreenState({
               args: [eoaAddress]
             })
           ]);
-          return [token.symbol, smartBalance + eoaBalance] as const;
+          return [token.address.toLowerCase(), smartBalance + eoaBalance] as const;
         })
       );
       return Object.fromEntries(entries) as TokenBalances;
@@ -136,8 +195,23 @@ export function useBridgeScreenState({
   });
 
   const destinationBalanceQuery = useQuery({
-    queryKey: ['destination-balance', destinationChain.id, selectedToken?.kind, selectedToken?.address, walletAddress],
-    enabled: Boolean(destinationSmart?.publicClient && walletAddress && selectedToken),
+    queryKey: [
+      'destination-balance',
+      destinationChain.id,
+      sourceChain.id,
+      sourceSmart?.account.address,
+      destinationSmart?.account.address,
+      universalBridgeAddress,
+      selectedToken?.kind,
+      selectedToken?.address,
+      walletAddress
+    ],
+    enabled: Boolean(
+      destinationSmart?.publicClient &&
+        walletAddress &&
+        selectedToken &&
+        (selectedToken.kind === 'nativeEthViaWeth' || sourceSmart?.publicClient)
+    ),
     queryFn: async () => {
       const smart = destinationSmart;
       const eoaAddress = walletAddress;
@@ -151,8 +225,36 @@ export function useBridgeScreenState({
         return smart.publicClient.getBalance({ address: eoaAddress });
       }
 
+      const sourceSmartAccount = sourceSmart;
+      if (!sourceSmartAccount) {
+        throw new Error('Source smart account is not ready yet.');
+      }
+
+      if (!universalBridgeAddress) {
+        return smart.publicClient.readContract({
+          address: selectedToken.address,
+          abi: erc20Abi,
+          functionName: 'balanceOf',
+          args: [eoaAddress]
+        });
+      }
+
+      const sourceTokenBridgeMode = await resolveSourceTokenBridgeMode({
+        sourceSmart: sourceSmartAccount,
+        selectedToken
+      });
+      const destinationPayoutTokenAddress = await resolveDestinationPayoutTokenAddress({
+        sourceSmart: sourceSmartAccount,
+        destinationSmart: smart,
+        selectedToken,
+        sourceTokenBridgeMode,
+        sourceChainId: sourceChain.id,
+        destinationChainId: destinationChain.id,
+        universalBridgeAddress
+      });
+
       return smart.publicClient.readContract({
-        address: selectedToken.address,
+        address: destinationPayoutTokenAddress,
         abi: erc20Abi,
         functionName: 'balanceOf',
         args: [eoaAddress]
@@ -165,13 +267,88 @@ export function useBridgeScreenState({
   const sourceBalance = selectedToken
     ? selectedToken.kind === 'nativeEthViaWeth'
       ? sourceNativeBalances?.total
-      : sourceTokenBalances?.[selectedToken.symbol]
+      : sourceTokenBalances?.[selectedToken.address.toLowerCase()]
     : undefined;
   const selectedTokenDisplayBalance = selectedToken ? formatTokenAmount(sourceBalance, selectedToken.decimals) : '...';
   const selectedTokenHasBalance = sourceBalance === undefined ? true : sourceBalance > 0n;
   const noBalanceTooltip = selectedToken
     ? `No ${selectedToken.symbol} available on source chain (EOA + smart account).`
     : undefined;
+
+  const importBridgeToken = useCallback(async () => {
+    if (!walletAddress) {
+      const message = 'Connect a wallet before importing a rollup token.';
+      setImportTokenError(message);
+      onBridgeError(message);
+      return undefined;
+    }
+
+    const candidateAddress = importTokenAddressInput.trim();
+    if (!candidateAddress) {
+      const message = 'Enter the token address on the current source rollup.';
+      setImportTokenError(message);
+      onBridgeError(message);
+      return undefined;
+    }
+
+    const sourcePublicClient = composeConfig.getPublicClient(sourceChain.id);
+    if (!sourcePublicClient) {
+      const message = `Source rollup public client is not configured for chain ${sourceChain.id}.`;
+      setImportTokenError(message);
+      onBridgeError(message);
+      return undefined;
+    }
+
+    try {
+      setIsImportingToken(true);
+      setImportTokenError(null);
+
+      const token = await resolveImportedTokenMetadata({
+        publicClient: sourcePublicClient,
+        tokenAddress: candidateAddress
+      });
+
+      const nextImportedTokens = upsertImportedToken({
+        networkMode: networkProfile.mode,
+        chainId: sourceChain.id,
+        walletAddress,
+        token
+      }).map((item) => ({
+        ...item,
+        kind: 'erc20' as const
+      }));
+
+      const importedToken: DemoToken = {
+        ...token,
+        kind: 'erc20'
+      };
+
+      setImportedTokens(nextImportedTokens);
+      setImportTokenAddressInput('');
+      setSelectedTokenValue(getAssetValue(importedToken));
+      void sourceTokenBalancesQuery.refetch();
+      void destinationBalanceQuery.refetch();
+
+      return importedToken;
+    } catch (error) {
+      const rawMessage = error instanceof Error ? error.message : 'Could not import token from address.';
+      const message = rawMessage.toLowerCase().includes('valid evm address')
+        ? 'Enter a valid token address on the current source rollup.'
+        : 'Could not import token. Enter the token address on the current source rollup.';
+      setImportTokenError(message);
+      onBridgeError(message);
+      return undefined;
+    } finally {
+      setIsImportingToken(false);
+    }
+  }, [
+    destinationBalanceQuery,
+    importTokenAddressInput,
+    onBridgeError,
+    sourceChain.id,
+    sourceTokenBalancesQuery,
+    walletAddress
+  ]);
 
   const handleSourceChainChange = useCallback(
     (nextSourceChainId: number) => {
@@ -208,7 +385,7 @@ export function useBridgeScreenState({
     destinationChain,
     sourceSmart,
     destinationSmart,
-    bridgeAddress,
+    universalBridgeAddress,
     entryPointAddress,
     hasPaymaster: Boolean(networkProfile.paymasterByChainId),
     ensureWalletOnChain,
@@ -232,11 +409,16 @@ export function useBridgeScreenState({
   const canSubmitBridge =
     isConnected &&
     Boolean(selectedToken) &&
+    Boolean(universalBridgeAddress) &&
     hasAmountInput &&
     !accountsLoading &&
     !isSubmitting &&
     sourceChain.id !== destinationChain.id &&
     selectedTokenHasBalance;
+
+  const bridgeDisabledReason = universalBridgeAddress
+    ? null
+    : 'Universal L2->L2 bridge address is missing. Set VITE_TESTNET_UNIVERSAL_L2_TO_L2_BRIDGE.';
 
   const sourceOptions: PickerOption<number>[] = useMemo(
     () =>
@@ -258,21 +440,24 @@ export function useBridgeScreenState({
     []
   );
 
-  const tokenOptions: PickerOption<DemoToken['symbol']>[] = useMemo(
+  const tokenOptions: PickerOption<string>[] = useMemo(
     () =>
-      demoTokens.map((token) => {
-        const balance = token.kind === 'nativeEthViaWeth' ? sourceNativeBalances?.total : sourceTokenBalances?.[token.symbol];
+      bridgeTokens.map((token) => {
+        const balance =
+          token.kind === 'nativeEthViaWeth'
+            ? sourceNativeBalances?.total
+            : sourceTokenBalances?.[token.address.toLowerCase()];
         const isNoBalance = balance !== undefined && balance === 0n;
 
         return {
-          key: token.symbol,
-          value: token.symbol,
+          key: getAssetValue(token),
+          value: getAssetValue(token),
           left: token.symbol,
           right: formatTokenAmount(balance, token.decimals),
           disabled: isNoBalance
         };
       }),
-    [sourceNativeBalances?.total, sourceTokenBalances]
+    [bridgeTokens, sourceNativeBalances?.total, sourceTokenBalances]
   );
 
   const resetBridgeForm = useCallback(() => {
@@ -282,7 +467,7 @@ export function useBridgeScreenState({
   return {
     sourceChainId,
     destinationChainId,
-    selectedTokenSymbol,
+    selectedTokenValue,
     amountInput,
     sourceChain,
     destinationChain,
@@ -301,6 +486,7 @@ export function useBridgeScreenState({
     destinationBalanceQuery,
     accountsLoading,
     sourceBalancesLoading,
+    bridgeDisabledReason,
     canSubmitBridge,
     executeBridge,
     isSubmitting,
@@ -308,7 +494,12 @@ export function useBridgeScreenState({
     clearBridgePhase,
     results,
     smartByChainId,
-    setSelectedTokenSymbol,
+    importTokenAddressInput,
+    importTokenError,
+    isImportingToken,
+    setSelectedTokenValue,
+    setImportTokenAddressInput,
+    importBridgeToken,
     setAmountInput,
     handleSourceChainChange,
     handleDestinationChainChange,

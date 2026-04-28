@@ -18,5 +18,9 @@ export const normalizeExecutionErrorMessage = (rawMessage: string): string => {
     return 'Cross-rollup submit method is unavailable on the configured RPC. Verify the endpoint supports eth_sendXTransaction.';
   }
 
+  if (normalized.includes('messagenotfound') || normalized.includes('0x28915ac7')) {
+    return 'Destination mailbox message is not available yet. Wait for relay/sequencer propagation, then retry destination receive.';
+  }
+
   return truncate(cleanMessage);
 };

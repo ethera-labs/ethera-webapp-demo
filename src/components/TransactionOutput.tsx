@@ -7,6 +7,9 @@ type TransactionOutputProps = {
 };
 
 const resolveChainLabel = (result: BridgeResult, index: number): string => {
+  const stepLabel = result.stepLabels?.[index]?.trim();
+  if (stepLabel) return stepLabel;
+
   const explicitLabel = result.chainLabels?.[index]?.trim();
   if (explicitLabel) return explicitLabel;
 
@@ -37,7 +40,7 @@ const renderTransactionCard = (result: BridgeResult) => {
         </div>
       </div>
       {result.receiptStatuses.some((status) => status === 'pending') ? (
-        <p className="hint tx-progress-note">Waiting for confirmations on both rollups.</p>
+        <p className="hint tx-progress-note">Waiting for cross-rollup confirmations.</p>
       ) : null}
       <div className="tx-list">
         {result.hashes.map((hash, index) => (

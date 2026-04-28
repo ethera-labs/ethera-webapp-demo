@@ -13,6 +13,8 @@ import type {
 
 // EntryPoint deposit requirement estimation for non-paymaster mode.
 const withGasMargin = (value: bigint, marginPct = 25n) => value + (value * marginPct) / 100n;
+const resolveRecommendedTopUp = (shortfall: bigint) =>
+  shortfall > 0n ? (shortfall > MIN_RECOMMENDED_TOP_UP ? withGasMargin(shortfall, 100n) : MIN_RECOMMENDED_TOP_UP) : 0n;
 
 const estimateCallGasWithFallback = async ({
   smart,
@@ -80,8 +82,7 @@ const estimateEntryPointRequirementForChain = async ({
   });
 
   const shortfall = estimatedRequired > currentDeposit ? estimatedRequired - currentDeposit : 0n;
-  const recommendedTopUp =
-    shortfall > 0n ? (shortfall > MIN_RECOMMENDED_TOP_UP ? withGasMargin(shortfall, 100n) : MIN_RECOMMENDED_TOP_UP) : 0n;
+  const recommendedTopUp = resolveRecommendedTopUp(shortfall);
 
   return {
     chainId: smart.publicClient.chain!.id,

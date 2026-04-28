@@ -1,10 +1,12 @@
 import { composeUnpreparedUserOps } from '@ssv-labs/ethera-sdk';
-import { erc20Abi } from 'viem';
+import { erc20Abi, parseEventLogs, type Log, type TransactionReceipt } from 'viem';
+import { MESSAGE_NOT_FOUND_SELECTOR } from '../../lib/universalL2L2Bridge';
 import {
   COMPOSE_BUILD_TIMEOUT_MS,
   COMPOSE_SEND_TIMEOUT_MS,
   HASH_PRESENCE_POLL_ATTEMPTS,
   HASH_PRESENCE_POLL_INTERVAL_MS,
+  L2_TO_L2_USER_OP_GAS_OVERRIDES,
   RECEIPT_WAIT_TIMEOUT_MS,
   USER_OP_BUILD_TIMEOUT_MS
 } from './constants';
@@ -16,6 +18,129 @@ const withTimeout = <T,>(promise: Promise<T>, timeoutMs: number, message: string
     promise,
     new Promise<T>((_, reject) => setTimeout(() => reject(new Error(message)), timeoutMs))
   ]);
+
+const entryPointEventsAbi = [
+  {
+    type: 'event',
+    name: 'UserOperationEvent',
+    anonymous: false,
+    inputs: [
+      { name: 'userOpHash', type: 'bytes32', indexed: true },
+      { name: 'sender', type: 'address', indexed: true },
+      { name: 'paymaster', type: 'address', indexed: true },
+      { name: 'nonce', type: 'uint256', indexed: false },
+      { name: 'success', type: 'bool', indexed: false },
+      { name: 'actualGasCost', type: 'uint256', indexed: false },
+      { name: 'actualGasUsed', type: 'uint256', indexed: false }
+    ]
+  },
+  {
+    type: 'event',
+    name: 'UserOperationRevertReason',
+    anonymous: false,
+    inputs: [
+      { name: 'userOpHash', type: 'bytes32', indexed: true },
+      { name: 'sender', type: 'address', indexed: true },
+      { name: 'nonce', type: 'uint256', indexed: false },
+      { name: 'revertReason', type: 'bytes', indexed: false }
+    ]
+  }
+] as const;
+
+const applyUserOpGasOverrides = <
+  T extends {
+    userOp: {
+      callGasLimit: bigint;
+      verificationGasLimit: bigint;
+      preVerificationGas: bigint;
+    };
+  }
+>(
+  operation: T,
+  role: keyof typeof L2_TO_L2_USER_OP_GAS_OVERRIDES
+): T => {
+  const overrides = L2_TO_L2_USER_OP_GAS_OVERRIDES[role];
+  if (!overrides.callGasLimit && !overrides.verificationGasLimit && !overrides.preVerificationGas) {
+    return operation;
+  }
+
+  return {
+    ...operation,
+    userOp: {
+      ...operation.userOp,
+      ...(overrides.callGasLimit ? { callGasLimit: overrides.callGasLimit } : {}),
+      ...(overrides.verificationGasLimit ? { verificationGasLimit: overrides.verificationGasLimit } : {}),
+      ...(overrides.preVerificationGas ? { preVerificationGas: overrides.preVerificationGas } : {})
+    }
+  };
+};
+
+const resolveUserOpOutcome = ({
+  logs,
+  expectedSender
+}: {
+  logs: Log[];
+  expectedSender: `0x${string}`;
+}) => {
+  const userOperationEvents = parseEventLogs({
+    abi: entryPointEventsAbi,
+    eventName: 'UserOperationEvent',
+    logs,
+    strict: false
+  });
+  const userOperationRevertEvents = parseEventLogs({
+    abi: entryPointEventsAbi,
+    eventName: 'UserOperationRevertReason',
+    logs,
+    strict: false
+  });
+
+  const successEvent = userOperationEvents.find(
+    (eventLog) => eventLog.args.sender?.toLowerCase() === expectedSender.toLowerCase()
+  );
+  const revertEvent = userOperationRevertEvents.find(
+    (eventLog) => eventLog.args.sender?.toLowerCase() === expectedSender.toLowerCase()
+  );
+
+  return {
+    success: successEvent?.args.success,
+    revertReason: revertEvent?.args.revertReason
+  };
+};
+
+const resolveRevertReasonMessage = (revertReason: `0x${string}` | undefined) => {
+  if (!revertReason || revertReason.length < 10) return 'User operation reverted onchain.';
+
+  const selector = revertReason.slice(0, 10).toLowerCase();
+  if (selector === MESSAGE_NOT_FOUND_SELECTOR) {
+    return 'Destination mailbox message is not available yet (MessageNotFound).';
+  }
+
+  return `User operation reverted onchain (selector: ${selector}).`;
+};
+
+const assertUserOperationSucceeded = ({
+  receipt,
+  expectedSender,
+  stepLabel
+}: {
+  receipt: TransactionReceipt;
+  expectedSender: `0x${string}`;
+  stepLabel: string;
+}) => {
+  if (receipt.status !== 'success') {
+    throw new Error(`${stepLabel} transaction reverted onchain.`);
+  }
+
+  const outcome = resolveUserOpOutcome({
+    logs: receipt.logs,
+    expectedSender
+  });
+
+  if (outcome.success === false) {
+    throw new Error(`${stepLabel} failed: ${resolveRevertReasonMessage(outcome.revertReason)}`);
+  }
+};
 
 const verifySequencerBroadcast = async ({
   sourceSmartAccount,
@@ -61,24 +186,25 @@ const verifySequencerBroadcast = async ({
   );
 };
 
-/**
- * Runs approval (if needed), composes user ops, submits payload via SDK send, and waits for receipts.
- */
-export const executeComposedBridgeFlow = async ({
+const prepareSourceFundingIfNeeded = async ({
   sourceSmartAccount,
-  destinationSmartAccount,
   sourceChain,
-  sourceCalls,
-  destinationCalls,
   selectedToken,
   walletAddress,
   sender,
   fundingContext,
   ensureWalletOnChain,
-  setBridgePhase,
-  onPayloadSubmitted
-}: ExecuteComposedBridgeFlowParams): Promise<ExecuteComposedBridgeFlowResult> => {
-  // ETH mode may need a native EOA -> smart-account transfer before source userOp creation.
+  setBridgePhase
+}: {
+  sourceSmartAccount: ExecuteComposedBridgeFlowParams['sourceSmartAccount'];
+  sourceChain: ExecuteComposedBridgeFlowParams['sourceChain'];
+  selectedToken: ExecuteComposedBridgeFlowParams['selectedToken'];
+  walletAddress: ExecuteComposedBridgeFlowParams['walletAddress'];
+  sender: ExecuteComposedBridgeFlowParams['sender'];
+  fundingContext: ExecuteComposedBridgeFlowParams['fundingContext'];
+  ensureWalletOnChain: ExecuteComposedBridgeFlowParams['ensureWalletOnChain'];
+  setBridgePhase: ExecuteComposedBridgeFlowParams['setBridgePhase'];
+}) => {
   if (fundingContext.kind === 'nativeEthViaWeth' && fundingContext.amountToFundSmartAccountFromEoa > 0n) {
     setBridgePhase(`Funding source smart account with ${selectedToken.symbol}...`);
 
@@ -94,7 +220,6 @@ export const executeComposedBridgeFlow = async ({
     await sourceSmartAccount.publicClient.waitForTransactionReceipt({ hash: fundingHash });
   }
 
-  // ERC20 approval flow remains BTK-only and is skipped for ETH mode.
   if (
     fundingContext.kind === 'erc20' &&
     fundingContext.amountToPullFromEoa > 0n &&
@@ -115,20 +240,55 @@ export const executeComposedBridgeFlow = async ({
     setBridgePhase('Waiting for EOA approval confirmation...');
     await sourceSmartAccount.publicClient.waitForTransactionReceipt({ hash: approvalHash });
   }
+};
+
+/**
+ * Runs approval (if needed), composes source+destination user ops, submits once, and waits for both receipts.
+ */
+export const executeComposedBridgeFlow = async ({
+  sourceSmartAccount,
+  destinationSmartAccount,
+  sourceChain,
+  destinationChain,
+  sourceCalls,
+  destinationCalls,
+  selectedToken,
+  walletAddress,
+  sender,
+  receiver,
+  fundingContext,
+  ensureWalletOnChain,
+  setBridgePhase,
+  onStageSubmitted,
+  onStageStatusUpdated
+}: ExecuteComposedBridgeFlowParams): Promise<ExecuteComposedBridgeFlowResult> => {
+  await prepareSourceFundingIfNeeded({
+    sourceSmartAccount,
+    sourceChain,
+    selectedToken,
+    walletAddress,
+    sender,
+    fundingContext,
+    ensureWalletOnChain,
+    setBridgePhase
+  });
 
   setBridgePhase('Preparing source operation...');
-  const sourceUserOp = await withTimeout(
+  const sourceUserOpPrepared = await withTimeout(
     sourceSmartAccount.account.createUserOp(sourceCalls),
     USER_OP_BUILD_TIMEOUT_MS,
     'Timed out while building source UserOperation.'
   );
 
   setBridgePhase('Preparing destination operation...');
-  const destinationUserOp = await withTimeout(
+  const destinationUserOpPrepared = await withTimeout(
     destinationSmartAccount.account.createUserOp(destinationCalls),
     USER_OP_BUILD_TIMEOUT_MS,
     'Timed out while building destination UserOperation.'
   );
+
+  const sourceUserOp = applyUserOpGasOverrides(sourceUserOpPrepared, 'source');
+  const destinationUserOp = applyUserOpGasOverrides(destinationUserOpPrepared, 'destination');
 
   setBridgePhase('Awaiting wallet signature and composing payload...');
   const composed = await withTimeout(
@@ -152,10 +312,19 @@ export const executeComposedBridgeFlow = async ({
   );
 
   const hashesToTrack = sendResult.hashes;
-  onPayloadSubmitted({
-    hashesToTrack,
-    explorerUrls: composed.explorerUrls
-  });
+  const explorerUrls = composed.explorerUrls;
+
+  for (let index = 0; index < hashesToTrack.length; index += 1) {
+    const hash = hashesToTrack[index];
+    if (!hash) continue;
+
+    onStageSubmitted({
+      hash,
+      explorerUrl: explorerUrls[index] ?? '',
+      chainLabel: index === 0 ? sourceChain.name : destinationChain.name,
+      stepLabel: index === 0 ? 'Source bridge submit' : 'Destination receive + payout'
+    });
+  }
 
   setBridgePhase('Payload submitted. Waiting for rollup confirmations...');
 
@@ -166,10 +335,54 @@ export const executeComposedBridgeFlow = async ({
       'Timed out while waiting for cross-rollup confirmations. Check explorer links.'
     );
 
+    const sourceReceipt = receipts[0];
+    const destinationReceipt = receipts[1];
+
+    if (!sourceReceipt || !destinationReceipt) {
+      throw new Error('Cross-rollup confirmation is missing source or destination receipt.');
+    }
+
+    try {
+      assertUserOperationSucceeded({
+        receipt: sourceReceipt,
+        expectedSender: sender,
+        stepLabel: 'Source bridge submit'
+      });
+      if (hashesToTrack[0]) {
+        onStageStatusUpdated({ hash: hashesToTrack[0], status: 'success' });
+      }
+    } catch (sourceError) {
+      if (hashesToTrack[0]) {
+        onStageStatusUpdated({ hash: hashesToTrack[0], status: 'failed' });
+      }
+      throw sourceError;
+    }
+
+    try {
+      assertUserOperationSucceeded({
+        receipt: destinationReceipt,
+        expectedSender: receiver,
+        stepLabel: 'Destination receive + payout'
+      });
+      if (hashesToTrack[1]) {
+        onStageStatusUpdated({ hash: hashesToTrack[1], status: 'success' });
+      }
+    } catch (destinationError) {
+      if (hashesToTrack[1]) {
+        onStageStatusUpdated({ hash: hashesToTrack[1], status: 'failed' });
+      }
+      throw destinationError;
+    }
+
     return {
       hashesToTrack,
-      explorerUrls: composed.explorerUrls,
-      receiptStatuses: receipts.map((receipt) => (receipt.status === 'success' ? 'success' : 'failed'))
+      explorerUrls,
+      chainLabels: hashesToTrack.map((_, index) => (index === 0 ? sourceChain.name : destinationChain.name)),
+      stepLabels: hashesToTrack.map((_, index) => (index === 0 ? 'Source bridge submit' : 'Destination receive + payout')),
+      receiptStatuses: hashesToTrack.map((_, index) => {
+        const receipt = receipts[index];
+        return receipt?.status === 'success' ? 'success' : 'failed';
+      })
     };
   } catch (executionError) {
     const timedOut = executionError instanceof Error && executionError.message.includes('Timed out while waiting for');

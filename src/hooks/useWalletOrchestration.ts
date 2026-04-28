@@ -135,6 +135,10 @@ export function useWalletOrchestration({
     queryClient.removeQueries({ queryKey: ['source-native-balances'] });
     queryClient.removeQueries({ queryKey: ['destination-balance'] });
     queryClient.removeQueries({ queryKey: ['l1-native-balance'] });
+    queryClient.removeQueries({ queryKey: ['l2-return-native-balance'] });
+    queryClient.removeQueries({ queryKey: ['l2-return-route'] });
+    queryClient.removeQueries({ queryKey: ['l2-return-erc20-assets'] });
+    queryClient.removeQueries({ queryKey: ['withdrawal-lifecycle'] });
   }, [disconnectAsync, onWalletError, queryClient]);
 
   return useMemo(

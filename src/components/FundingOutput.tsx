@@ -1,14 +1,31 @@
-import { formatEther } from 'viem';
+import { formatUnits } from 'viem';
 import type { FundingResult } from '../types/funding';
 import { TransactionHistorySection } from './transactionOutput.shared';
 import { formatRunTimestamp, getStatusTag } from './transactionOutput.utils';
 
 type FundingOutputProps = {
   results: FundingResult[];
+  title?: string;
+  emptyMessage?: string;
+  archiveSummaryLabel?: string;
+  pendingMessage?: string;
 };
 
-const renderFundingCard = (result: FundingResult) => {
+/**
+ * Renders a clickable explorer value when URL is available.
+ */
+const renderExplorerValue = ({ value, url }: { value: string; url?: string }) =>
+  url ? (
+    <a href={url} target="_blank" rel="noreferrer" className="mono tx-hash" title={value}>
+      {value}
+    </a>
+  ) : (
+    <span className="mono tx-hash">{value}</span>
+  );
+
+const renderFundingCard = (result: FundingResult, pendingMessage: string) => {
   const status = getStatusTag(result.status);
+  const destinationTxStatusTag = result.destinationTxStatus ? getStatusTag(result.destinationTxStatus) : null;
 
   return (
     <div className="transactions-card" key={result.sessionId.toString()}>
@@ -21,7 +38,13 @@ const renderFundingCard = (result: FundingResult) => {
         </div>
       </div>
 
-      {result.status === 'pending' ? <p className="hint tx-progress-note">Waiting for L1 confirmation.</p> : null}
+      {result.status === 'pending' ? <p className="hint tx-progress-note">{pendingMessage}</p> : null}
+      {result.status === 'success' && result.destinationTxStatus === 'pending' ? (
+        <p className="hint tx-progress-note">L1 confirmed. Waiting for destination rollup confirmation.</p>
+      ) : null}
+      {result.status === 'success' && result.destinationTxStatus === 'failed' ? (
+        <p className="hint hint-warning">Destination rollup transaction failed. Open the rollup tx for details.</p>
+      ) : null}
 
       <div className="tx-list">
         <div className="tx-item">
@@ -34,7 +57,9 @@ const renderFundingCard = (result: FundingResult) => {
         </div>
         <div className="tx-item">
           <span className="tx-label">Amount</span>
-          <span className="mono tx-hash">{formatEther(result.amountWei)} ETH</span>
+          <span className="mono tx-hash">
+            {formatUnits(result.amountWei, result.tokenDecimals)} {result.tokenSymbol}
+          </span>
         </div>
         <div className="tx-item">
           <span className="tx-label">Recipient</span>
@@ -42,27 +67,49 @@ const renderFundingCard = (result: FundingResult) => {
         </div>
         <div className="tx-item">
           <span className="tx-label">{result.sourceChainLabel} Tx</span>
-          {result.explorerUrl ? (
-            <a href={result.explorerUrl} target="_blank" rel="noreferrer" className="mono tx-hash" title={result.hash}>
-              {result.hash}
-            </a>
-          ) : (
-            <span className="mono tx-hash">{result.hash}</span>
-          )}
+          {renderExplorerValue({ value: result.hash, url: result.explorerUrl })}
         </div>
+        {result.destinationTxHash ? (
+          <div className="tx-item">
+            <span className="tx-label">{result.destinationChainLabel} Tx</span>
+            {renderExplorerValue({ value: result.destinationTxHash, url: result.destinationTxExplorerUrl })}
+          </div>
+        ) : null}
+        {result.destinationTxHash && destinationTxStatusTag ? (
+          <div className="tx-item">
+            <span className="tx-label">{result.destinationChainLabel} Status</span>
+            <span className="tx-hash">
+              <span className={`receipt-status-tag receipt-status-tag-${destinationTxStatusTag.tone}`}>
+                {destinationTxStatusTag.label}
+              </span>
+            </span>
+          </div>
+        ) : null}
+        {result.destinationTokenAddress ? (
+          <div className="tx-item">
+            <span className="tx-label">Destination Token</span>
+            {renderExplorerValue({ value: result.destinationTokenAddress, url: result.destinationTokenExplorerUrl })}
+          </div>
+        ) : null}
       </div>
     </div>
   );
 };
 
-export function FundingOutput({ results }: FundingOutputProps) {
+export function FundingOutput({
+  results,
+  title = 'Transactions',
+  emptyMessage = 'Run an L1 transaction to see hashes and explorer links.',
+  archiveSummaryLabel = 'Show previous transactions',
+  pendingMessage = 'Waiting for L1 confirmation.'
+}: FundingOutputProps) {
   return (
     <TransactionHistorySection
-      title="Transactions"
-      emptyMessage="Run an L1 transaction to see hashes and explorer links."
-      archiveSummaryLabel="Show previous transactions"
+      title={title}
+      emptyMessage={emptyMessage}
+      archiveSummaryLabel={archiveSummaryLabel}
       results={results}
-      renderCard={renderFundingCard}
+      renderCard={(result) => renderFundingCard(result, pendingMessage)}
     />
   );
 }

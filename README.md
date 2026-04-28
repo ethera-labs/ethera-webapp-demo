@@ -1,90 +1,210 @@
-# Ethera Rollup Bridge
+# Ethera Webapp Demo
 
-Cross-rollup token bridge demo built with `@ssv-labs/ethera-sdk`.
+Universal bridge demo for Ethera.
 
-## What this app demonstrates
+This app is a demo that shows the full Ethera flow across Sepolia and two rollups:
+- `L1 -> L2`
+- `L2 -> L2`
+- `L2 -> L1`
 
-- Smart account creation on two rollups
-- Multi-chain user-op creation with the SDK (`createUserOp`)
-- Atomic composition with `composeUnpreparedUserOps`
-- Cross-rollup submission and receipt tracking
-- Clean, client-friendly UI with Ethera + SSV-inspired styling
+## What This Demo Covers
 
-## Run locally
+- Smart account creation on both rollups with `@ssv-labs/ethera-sdk`
+- Universal bridge deposits from Sepolia to either rollup
+- Cross-rollup transfers between Rollup A and Rollup B
+- Rollup withdrawals back to Sepolia
+- Optional paymaster support
+- Token import for canonical L1 assets and rollup-side assets
+
+This app follows the universal bridge flow.
+
+## Bridge Flows
+
+### L1 -> L2
+
+Source chain: Sepolia  
+Destination chain: Rollup A or Rollup B
+
+Contract path:
+- `ComposeL1Bridge` on Sepolia
+- `L2ComposeBridge` on the destination rollup
+
+Behavior:
+- ETH uses `bridgeETHTo(...)`
+- Canonical L1 ERC20 uses `bridgeERC20To(...)`
+- If the asset does not yet exist on the destination rollup, the destination side can deploy the CET representation before minting
+
+Notes:
+- For first-time CET creation, the message gas limit matters
+- The current recommended Sepolia config uses `VITE_TESTNET_L1_BRIDGE_MIN_GAS_LIMIT=2000000`
+
+### L2 -> L2
+
+Source chain: Rollup A or Rollup B  
+Destination chain: the other rollup
+
+Contract path:
+- `ComposeL2ToL2Bridge` on the source rollup
+- `ComposeL2ToL2Bridge` on the destination rollup
+
+SDK usage:
+- build source and destination UserOps with the Ethera SDK
+- compose them into one cross-rollup payload
+- submit once and track both rollup transactions
+
+Behavior:
+- ETH uses `bridgeEthTo(...)`
+- Plain ERC20 uses `bridgeERC20To(...)`
+- CET uses `bridgeCETTo(...)`
+- The app resolves the token route dynamically from the source token
+
+Notes:
+- Some CET routes need higher destination-side UserOp gas, especially when the destination rollup must deploy the CET for the first time
+- The current Sepolia example env includes destination-side gas overrides for that case
+
+### L2 -> L1
+
+Source chain: Rollup A or Rollup B  
+Destination chain: Sepolia
+
+Contract path:
+- `L2ComposeBridge` on the source rollup
+- `ComposePortal` on Sepolia
+
+Behavior:
+1. Submit the withdrawal on the rollup
+2. Wait until the withdrawal becomes provable on Sepolia
+3. Submit the prove transaction on Sepolia
+4. Wait until the proof matures
+5. Submit the finalize transaction on Sepolia
+
+Important:
+- This is not a one-click instant return flow
+- On the current Sepolia setup, proving depends on the dispute game pipeline
+- Finalization is time-gated by the portal
+
+Observed Sepolia behavior during testing:
+- `ready-to-prove` typically appeared after the next eligible dispute game was published
+- finalization is gated by the portal's configured proof maturity delay
+
+## Contracts
+
+Main universal bridge contracts used by the demo:
+- `ComposeL1Bridge`
+- `L2ComposeBridge`
+- `ComposeL2ToL2Bridge`
+- `ComposePortal`
+
+The working Sepolia example config is documented in [.env.testnet.example](./.env.testnet.example).
+
+## Getting Started
+
+### Requirements
+
+- Node.js 20+
+- npm
+- MetaMask or another injected wallet
+
+### Install
 
 ```bash
 npm install
-cp .env.example .env
+cp .env.testnet.example .env
 npm run dev
 ```
 
-The frontend runs on `http://localhost:5173`.
+The app runs at `http://localhost:5173`.
 
-## Current default mode
-
-- `VITE_COMPOSE_NETWORK=testnet`
-- Uses SDK rollup chains/contracts unless overridden in `.env`
-- Uses one explicit bridged token from env (`VITE_TESTNET_TOKEN_ADDRESS`)
-
-## Sepolia rollup override support
-
-You can override testnet rollups directly from `.env` (RPC, explorer, chain IDs, bridge/token addresses, token symbols, and AA contracts) without touching code.
-
-Minimal example:
+### Validate the Build
 
 ```bash
-VITE_COMPOSE_NETWORK=testnet
-VITE_TESTNET_LABEL=Custom Testnet
-VITE_TESTNET_ROLLUP_A_CHAIN_ID=111111
-VITE_TESTNET_ROLLUP_A_RPC=https://rollup-a-rpc.example.com/
-VITE_TESTNET_ROLLUP_B_CHAIN_ID=222222
-VITE_TESTNET_ROLLUP_B_RPC=https://rollup-b-rpc.example.com/
+npm run build
+npm run lint
 ```
 
-For realistic POC setups, prefer a single explicit token:
+## Environment
+
+The app expects a Vite env file. For testnet:
 
 ```bash
-VITE_TESTNET_TOKEN_ADDRESS=0x...
-VITE_TESTNET_TOKEN_DECIMALS=18
-VITE_TESTNET_TOKEN_SYMBOL=BTK
-VITE_TESTNET_WETH_ADDRESS=0x... # required for ETH mode (L2->L2)
+cp .env.testnet.example .env
 ```
 
-`VITE_TESTNET_WETH_ADDRESS` is required in testnet mode. If it is missing or invalid, the app fails fast on startup so ETH bridge mode cannot run with an incorrect contract address.
+Main config groups:
+- token config
+- L1 bridge config
+- universal bridge route config
+- optional paymaster config
+- optional gas tuning for known CET deployment cases
 
-## Paymaster support
+The SDK already provides rollup chain defaults and AA defaults. The env file mainly carries route-specific bridge configuration and demo token settings.
 
-The app is paymaster-ready. SDK `createUserOps` requests sponsorship data when paymaster is configured.
+## Quick Start
 
-You can configure:
+### 1. Fund Sepolia
 
-- One shared endpoint: `VITE_TESTNET_PAYMASTER_URL` / `VITE_MAINNET_PAYMASTER_URL`
-- Or dynamic base endpoint + chain route names:
-  - `VITE_TESTNET_PAYMASTER_BASE_URL`
-  - `VITE_TESTNET_ROLLUP_A_PAYMASTER_NAME`
-  - `VITE_TESTNET_ROLLUP_B_PAYMASTER_NAME`
-- Or explicit per-chain endpoints:
-  - `VITE_TESTNET_ROLLUP_A_PAYMASTER_URL`
-  - `VITE_TESTNET_ROLLUP_B_PAYMASTER_URL`
-  - `VITE_MAINNET_MAINNET_PAYMASTER_URL`
-  - `VITE_MAINNET_BASE_PAYMASTER_URL`
+You need:
+- Sepolia ETH for gas
+- Sepolia USDC if you want to test the USDC path
 
-Recommended local setup:
+USDC faucet:
+- Circle Public Faucet: https://faucet.circle.com
 
-- Dynamic mapping from one base URL:
-  - `VITE_TESTNET_PAYMASTER_BASE_URL=https://paymaster.example.com/rpc/v1`
-  - `VITE_TESTNET_ROLLUP_A_PAYMASTER_NAME=rollupA`
-  - `VITE_TESTNET_ROLLUP_B_PAYMASTER_NAME=rollupB`
+For Sepolia ETH, use your preferred Sepolia faucet.
 
-If paymaster env is omitted, the app runs in non-sponsored mode (smart accounts need native gas).
+### 2. Bridge Sepolia -> Rollup
 
-## Mainnet-ready scaffold
+In the `L1 to Rollup` section:
+- choose Rollup A or Rollup B
+- choose ETH or a canonical L1 token
+- submit the bridge
 
-A config scaffold exists for mainnet in `.env.example`, but it is intentionally disabled by default.
-To activate mainnet mode, set:
+If you bridge USDC for the first time to a rollup, the destination CET may be created during the deposit.
 
-```bash
-VITE_COMPOSE_NETWORK=mainnet
-```
+### 3. Bridge Rollup -> Rollup
 
-Then provide all required mainnet RPC and account abstraction contract values.
+In the `Rollup Bridge` section:
+- choose source and destination rollups
+- choose the asset
+- if the asset is not listed, import it
+- submit the bridge
+
+For bridged assets like USDC CET, import the token using the token address on the current source rollup.
+
+### 4. Withdraw Rollup -> Sepolia
+
+In the `Rollup to L1` section:
+- choose the source rollup
+- choose ETH or a canonical L1 token
+- submit the withdrawal
+
+Then complete the return flow in stages:
+- wait for `Ready to prove`
+- click `Prove on L1`
+- wait for `Ready to finalize`
+- click `Finalize on L1`
+
+## Paymaster Support
+
+Paymaster support is optional.
+
+If paymaster config is present:
+- the app runs in sponsored mode
+
+If paymaster config is absent:
+- the app checks EntryPoint funding and prompts for top-up when needed
+
+## Notes for Testing
+
+- Imported tokens are meant to make testing smoother, especially for freshly bridged assets
+- Rollup-to-rollup CET transfers may need higher destination gas than plain ERC20 routes
+- L2 -> L1 completion time depends on the live dispute game and portal state
+
+## Tech Stack
+
+- React
+- TypeScript
+- Vite
+- `viem`
+- `wagmi`
+- `@ssv-labs/ethera-sdk`
