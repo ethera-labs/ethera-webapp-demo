@@ -2,7 +2,7 @@ import { useMemo, useSyncExternalStore } from 'react';
 import { networkProfile } from '../composeConfig';
 import {
   getImportedTokensStorageKey,
-  readImportedTokens,
+  parseImportedTokens,
   subscribeToImportedTokens,
   type ImportedToken
 } from '../lib/importedTokens';
@@ -28,7 +28,7 @@ export function useImportedTokensStorage({ chainId, walletAddress }: UseImported
     });
   }, [chainId, walletAddress]);
 
-  return useSyncExternalStore(
+  const storageSnapshot = useSyncExternalStore(
     (onStoreChange) => {
       if (!storageKey) {
         return () => undefined;
@@ -42,16 +42,20 @@ export function useImportedTokensStorage({ chainId, walletAddress }: UseImported
       });
     },
     () => {
-      if (!walletAddress || !chainId) {
-        return EMPTY_IMPORTED_TOKENS;
+      if (!storageKey || typeof window === 'undefined') {
+        return null;
       }
 
-      return readImportedTokens({
-        networkMode: networkProfile.mode,
-        chainId,
-        walletAddress
-      });
+      return window.localStorage.getItem(storageKey);
     },
-    () => EMPTY_IMPORTED_TOKENS
+    () => null
   );
+
+  return useMemo(() => {
+    if (!walletAddress || !chainId) {
+      return EMPTY_IMPORTED_TOKENS;
+    }
+
+    return parseImportedTokens(storageSnapshot);
+  }, [chainId, storageSnapshot, walletAddress]);
 }

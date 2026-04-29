@@ -38,6 +38,10 @@ export const readImportedTokens = ({
 
   const key = getImportedTokensStorageKey({ networkMode, chainId, walletAddress });
   const raw = window.localStorage.getItem(key);
+  return parseImportedTokens(raw);
+};
+
+export const parseImportedTokens = (raw: string | null): ImportedToken[] => {
   if (!raw) return [];
 
   try {
