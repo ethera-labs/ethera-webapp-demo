@@ -51,6 +51,28 @@ type AutoResolvedBridgeToken = DemoToken & {
   bridgeMode: 'cet';
 };
 
+const readBridgeErc20BalanceOrZeroIfUndeployed = async ({
+  publicClient,
+  tokenAddress,
+  account
+}: {
+  publicClient: NonNullable<ReturnType<typeof composeConfig.getPublicClient>>;
+  tokenAddress: `0x${string}`;
+  account: `0x${string}`;
+}) => {
+  const tokenCode = await publicClient.getCode({ address: tokenAddress });
+  if (!tokenCode || tokenCode === '0x') {
+    return 0n;
+  }
+
+  return publicClient.readContract({
+    address: tokenAddress,
+    abi: erc20Abi,
+    functionName: 'balanceOf',
+    args: [account]
+  });
+};
+
 /**
  * Prepares all bridge screen view-model state while delegating execution to useBridgeExecution.
  */
@@ -256,26 +278,20 @@ export function useBridgeScreenState({
 
       const entries = await Promise.all(
         bridgeErc20Tokens.map(async (token) => {
-          try {
-            const [smartBalance, eoaBalance] = await Promise.all([
-              smart.publicClient.readContract({
-                address: token.address,
-                abi: erc20Abi,
-                functionName: 'balanceOf',
-                args: [smartAddress]
-              }),
-              smart.publicClient.readContract({
-                address: token.address,
-                abi: erc20Abi,
-                functionName: 'balanceOf',
-                args: [eoaAddress]
-              })
-            ]);
+          const [smartBalance, eoaBalance] = await Promise.all([
+            readBridgeErc20BalanceOrZeroIfUndeployed({
+              publicClient: smart.publicClient,
+              tokenAddress: token.address,
+              account: smartAddress
+            }),
+            readBridgeErc20BalanceOrZeroIfUndeployed({
+              publicClient: smart.publicClient,
+              tokenAddress: token.address,
+              account: eoaAddress
+            })
+          ]);
 
-            return [token.address.toLowerCase(), smartBalance + eoaBalance] as const;
-          } catch {
-            return [token.address.toLowerCase(), 0n] as const;
-          }
+          return [token.address.toLowerCase(), smartBalance + eoaBalance] as const;
         })
       );
       return Object.fromEntries(entries) as TokenBalances;
@@ -345,11 +361,10 @@ export function useBridgeScreenState({
       }
 
       if (!universalBridgeAddress) {
-        return smart.publicClient.readContract({
-          address: selectedToken.address,
-          abi: erc20Abi,
-          functionName: 'balanceOf',
-          args: [eoaAddress]
+        return readBridgeErc20BalanceOrZeroIfUndeployed({
+          publicClient: smart.publicClient,
+          tokenAddress: selectedToken.address,
+          account: eoaAddress
         });
       }
 
@@ -367,11 +382,10 @@ export function useBridgeScreenState({
         universalBridgeAddress
       });
 
-      return smart.publicClient.readContract({
-        address: destinationPayoutTokenAddress,
-        abi: erc20Abi,
-        functionName: 'balanceOf',
-        args: [eoaAddress]
+      return readBridgeErc20BalanceOrZeroIfUndeployed({
+        publicClient: smart.publicClient,
+        tokenAddress: destinationPayoutTokenAddress,
+        account: eoaAddress
       });
     }
   });
