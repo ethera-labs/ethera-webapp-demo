@@ -26,6 +26,8 @@ const renderExplorerValue = ({ value, url }: { value: string; url?: string }) =>
 const renderFundingCard = (result: FundingResult, pendingMessage: string) => {
   const status = getStatusTag(result.status);
   const destinationTxStatusTag = result.destinationTxStatus ? getStatusTag(result.destinationTxStatus) : null;
+  const showSourcePendingSpinner = result.status === 'pending';
+  const showDestinationPendingSpinner = result.destinationTxStatus === 'pending';
 
   return (
     <div className="transactions-card" key={result.sessionId.toString()}>
@@ -34,7 +36,10 @@ const renderFundingCard = (result: FundingResult, pendingMessage: string) => {
           <span className="transactions-card-time">{formatRunTimestamp(result.sessionId)}</span>
         </div>
         <div className="receipt-status-tags">
-          <span className={`receipt-status-tag receipt-status-tag-${status.tone}`}>{status.label}</span>
+          <span className={`receipt-status-tag receipt-status-tag-${status.tone}`}>
+            {status.label}
+            {showSourcePendingSpinner ? <span className="receipt-status-spinner" aria-hidden="true" /> : null}
+          </span>
         </div>
       </div>
 
@@ -81,6 +86,7 @@ const renderFundingCard = (result: FundingResult, pendingMessage: string) => {
             <span className="tx-hash">
               <span className={`receipt-status-tag receipt-status-tag-${destinationTxStatusTag.tone}`}>
                 {destinationTxStatusTag.label}
+                {showDestinationPendingSpinner ? <span className="receipt-status-spinner" aria-hidden="true" /> : null}
               </span>
             </span>
           </div>

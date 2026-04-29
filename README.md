@@ -82,6 +82,7 @@ Important:
 - This is not a one-click instant return flow
 - On the current Sepolia setup, proving depends on the dispute game pipeline
 - Finalization is time-gated by the portal
+- The return flow should use its own lower gas setting via `VITE_TESTNET_L2_TO_L1_MIN_GAS_LIMIT`
 
 Observed Sepolia behavior during testing:
 - `ready-to-prove` typically appeared after the next eligible dispute game was published

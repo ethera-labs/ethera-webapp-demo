@@ -246,7 +246,8 @@ export const createTestnetProfile = (): NetworkProfile => {
               }
             }
           : {}),
-        minGasLimit: getOptionalPositiveIntEnv('VITE_TESTNET_L1_BRIDGE_MIN_GAS_LIMIT') ?? 200_000
+        minGasLimit: getOptionalPositiveIntEnv('VITE_TESTNET_L1_BRIDGE_MIN_GAS_LIMIT') ?? 200_000,
+        returnMinGasLimit: getOptionalPositiveIntEnv('VITE_TESTNET_L2_TO_L1_MIN_GAS_LIMIT') ?? 200_000
       }
     : undefined;
 

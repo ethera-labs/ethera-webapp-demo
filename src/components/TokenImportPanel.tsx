@@ -5,6 +5,8 @@ type TokenImportPanelProps = {
   isImporting: boolean;
   helperText: string;
   secondaryHelperText?: string;
+  inputLabel?: string;
+  importButtonLabel?: string;
   onToggle: () => void;
   onAddressChange: (value: string) => void;
   onImport: () => void;
@@ -20,6 +22,8 @@ export function TokenImportPanel({
   isImporting,
   helperText,
   secondaryHelperText,
+  inputLabel = 'Custom token address',
+  importButtonLabel = 'Add token',
   onToggle,
   onAddressChange,
   onImport
@@ -27,7 +31,12 @@ export function TokenImportPanel({
   return (
     <>
       <div className="funding-import-toggle-row">
-        <button type="button" className="btn btn-secondary btn-compact" onClick={onToggle}>
+        <button
+          type="button"
+          className={`btn btn-secondary btn-compact token-import-toggle ${isOpen ? 'token-import-toggle-open' : ''}`}
+          aria-expanded={isOpen}
+          onClick={onToggle}
+        >
           <span className="btn-label">{toggleLabel}</span>
         </button>
       </div>
@@ -36,7 +45,7 @@ export function TokenImportPanel({
         <div className="funding-import-panel">
           <div className="funding-import-row">
             <label className="field">
-              <span>Import token</span>
+              <span>{inputLabel}</span>
               <input
                 className="mono"
                 value={addressInput}
@@ -52,7 +61,7 @@ export function TokenImportPanel({
               aria-busy={isImporting}
               onClick={onImport}
             >
-              <span className="btn-label">{isImporting ? 'Importing...' : 'Import token'}</span>
+              <span className="btn-label">{isImporting ? 'Adding...' : importButtonLabel}</span>
             </button>
           </div>
           <p className="hint">{helperText}</p>

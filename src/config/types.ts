@@ -24,6 +24,7 @@ export type L1FundingConfig = {
   bridgeByDestinationChainId: Record<number, `0x${string}`>;
   composePortalBySourceChainId?: Record<number, `0x${string}`>;
   minGasLimit: number;
+  returnMinGasLimit: number;
 };
 
 export type UniversalContractsConfig = {

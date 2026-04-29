@@ -25,6 +25,8 @@ const lifecycleTagByStatus: Record<WithdrawalLifecycleStatus, LifecycleTag> = {
   finalized: { label: 'Finalized on L1', tone: 'success' }
 };
 
+const waitingLifecycleStatuses = new Set<WithdrawalLifecycleStatus>(['waiting-to-prove', 'waiting-to-finalize']);
+
 const formatSecondsLabel = (seconds: number) => {
   if (!Number.isFinite(seconds)) return null;
 
@@ -74,7 +76,12 @@ const ReturnCard = ({
           <span className="transactions-card-time">{formatRunTimestamp(result.sessionId)}</span>
         </div>
         <div className="receipt-status-tags">
-          <span className={`receipt-status-tag receipt-status-tag-${lifecycleTag.tone}`}>{lifecycleTag.label}</span>
+          <span className={`receipt-status-tag receipt-status-tag-${lifecycleTag.tone}`}>
+            {lifecycleTag.label}
+            {waitingLifecycleStatuses.has(lifecycleStatus) ? (
+              <span className="receipt-status-spinner" aria-hidden="true" />
+            ) : null}
+          </span>
         </div>
       </div>
 

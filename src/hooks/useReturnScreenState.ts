@@ -398,6 +398,7 @@ export function useReturnScreenState({
 
     setReturnTokenValue(getAssetValue(importedToken));
     void returnErc20AssetsQuery.refetch();
+    return importedToken;
   }, [importCanonicalL1Token, returnErc20AssetsQuery]);
 
   const handleProve = useCallback(

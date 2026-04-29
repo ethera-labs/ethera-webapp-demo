@@ -7,6 +7,11 @@ export type ImportedToken = {
 };
 
 const STORAGE_KEY_PREFIX = 'importedTokens';
+const IMPORTED_TOKENS_UPDATED_EVENT = 'ethera:imported-tokens-updated';
+
+type ImportedTokensUpdatedDetail = {
+  storageKey: string;
+};
 
 const hasWindow = () => typeof window !== 'undefined' && Boolean(window.localStorage);
 
@@ -33,6 +38,10 @@ export const readImportedTokens = ({
 
   const key = getImportedTokensStorageKey({ networkMode, chainId, walletAddress });
   const raw = window.localStorage.getItem(key);
+  return parseImportedTokens(raw);
+};
+
+export const parseImportedTokens = (raw: string | null): ImportedToken[] => {
   if (!raw) return [];
 
   try {
@@ -70,9 +79,36 @@ export const upsertImportedToken = ({
   if (hasWindow()) {
     const key = getImportedTokensStorageKey({ networkMode, chainId, walletAddress });
     window.localStorage.setItem(key, JSON.stringify(next));
+    window.dispatchEvent(
+      new CustomEvent<ImportedTokensUpdatedDetail>(IMPORTED_TOKENS_UPDATED_EVENT, {
+        detail: { storageKey: key }
+      })
+    );
   }
 
   return next;
+};
+
+export const subscribeToImportedTokens = ({
+  onUpdate
+}: {
+  onUpdate: (detail: ImportedTokensUpdatedDetail) => void;
+}) => {
+  if (!hasWindow()) {
+    return () => undefined;
+  }
+
+  const handleUpdate = (event: Event) => {
+    const detail = (event as CustomEvent<ImportedTokensUpdatedDetail>).detail;
+    if (!detail?.storageKey) return;
+    onUpdate(detail);
+  };
+
+  window.addEventListener(IMPORTED_TOKENS_UPDATED_EVENT, handleUpdate as EventListener);
+
+  return () => {
+    window.removeEventListener(IMPORTED_TOKENS_UPDATED_EVENT, handleUpdate as EventListener);
+  };
 };
 
 const normalizeSymbol = (value: string, address: `0x${string}`) => {

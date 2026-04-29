@@ -33,6 +33,28 @@ const erc20BalanceOfAbi = [
   }
 ] as const;
 
+const readErc20BalanceOrZeroIfUndeployed = async ({
+  publicClient,
+  tokenAddress,
+  account
+}: {
+  publicClient: NonNullable<ReturnType<typeof composeConfig.getPublicClient>>;
+  tokenAddress: `0x${string}`;
+  account: `0x${string}`;
+}) => {
+  const tokenCode = await publicClient.getCode({ address: tokenAddress });
+  if (!tokenCode || tokenCode === '0x') {
+    return 0n;
+  }
+
+  return publicClient.readContract({
+    address: tokenAddress,
+    abi: erc20BalanceOfAbi,
+    functionName: 'balanceOf',
+    args: [account]
+  });
+};
+
 /**
  * Prepares all state needed by the L1 -> rollup funding UI.
  */
@@ -230,11 +252,10 @@ export function useFundingScreenState({
         remoteChainId: l1Chain.id
       });
 
-      return destinationPublicClient.readContract({
-        address: predictedCetAddress,
-        abi: erc20BalanceOfAbi,
-        functionName: 'balanceOf',
-        args: [eoaAddress]
+      return readErc20BalanceOrZeroIfUndeployed({
+        publicClient: destinationPublicClient,
+        tokenAddress: predictedCetAddress,
+        account: eoaAddress
       });
     }
   });
@@ -252,6 +273,7 @@ export function useFundingScreenState({
 
     setFundingTokenValue(getAssetValue(importedToken));
     void l1TokenBalancesQuery.refetch();
+    return importedToken;
   }, [importCanonicalL1Token, l1TokenBalancesQuery]);
 
   const {
