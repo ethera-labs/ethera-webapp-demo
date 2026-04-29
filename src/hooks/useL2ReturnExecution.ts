@@ -357,7 +357,7 @@ export function useL2ReturnExecution({
           address: sourceL2BridgeAddress,
           abi: l2StandardBridgeAbi,
           functionName: 'bridgeETHTo',
-          args: [walletAddress, l1FundingConfig.minGasLimit, '0x'],
+          args: [walletAddress, l1FundingConfig.returnMinGasLimit, '0x'],
           value: amountWei
         });
       } else {
@@ -391,7 +391,7 @@ export function useL2ReturnExecution({
             selectedAsset.l1TokenAddress,
             walletAddress,
             amountWei,
-            l1FundingConfig.minGasLimit,
+            l1FundingConfig.returnMinGasLimit,
             '0x'
           ]
         });
