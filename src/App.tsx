@@ -8,6 +8,7 @@ import { ReturnOutput } from './components/ReturnOutput';
 import { TokenImportPanel } from './components/TokenImportPanel';
 import { TransactionOutput } from './components/TransactionOutput';
 import { WalletPanel } from './components/WalletPanel';
+import { sanitizeDecimalAmountInput } from './lib/assets';
 import { formatTokenAmount } from './lib/format';
 import { useBridgeScreenState } from './hooks/useBridgeScreenState';
 import { useDepositTopUpOrchestration } from './hooks/useDepositTopUpOrchestration';
@@ -504,7 +505,7 @@ function App() {
                 <input
                   className={!selectedTokenHasBalance ? 'amount-input amount-input-disabled' : 'amount-input'}
                   value={amountInput}
-                  onChange={(event) => setAmountInput(event.target.value)}
+                  onChange={(event) => setAmountInput(sanitizeDecimalAmountInput(event.target.value))}
                   inputMode="decimal"
                   disabled={!selectedTokenHasBalance}
                   title={!selectedTokenHasBalance ? noBalanceTooltip : undefined}
@@ -634,7 +635,7 @@ function App() {
                 <input
                   className="amount-input"
                   value={fundingAmountInput}
-                  onChange={(event) => setFundingAmountInput(event.target.value)}
+                  onChange={(event) => setFundingAmountInput(sanitizeDecimalAmountInput(event.target.value))}
                   inputMode="decimal"
                   placeholder="0.01"
                 />
@@ -778,7 +779,7 @@ function App() {
                 <input
                   className="amount-input"
                   value={returnAmountInput}
-                  onChange={(event) => setReturnAmountInput(event.target.value)}
+                  onChange={(event) => setReturnAmountInput(sanitizeDecimalAmountInput(event.target.value))}
                   inputMode="decimal"
                   placeholder="0.01"
                 />

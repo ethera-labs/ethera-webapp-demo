@@ -9,6 +9,29 @@ type TokenIdentity = Pick<DemoToken, 'kind' | 'address'>;
 export const getAssetValue = ({ kind, address }: TokenIdentity) => `${kind}:${address.toLowerCase()}`;
 
 /**
+ * Keeps token amount inputs limited to digits and a single decimal point.
+ */
+export const sanitizeDecimalAmountInput = (value: string): string => {
+  const normalizedValue = value.replace(/\s+/g, '').replace(/,/g, '');
+  let sanitizedValue = '';
+  let hasDecimalPoint = false;
+
+  for (const character of normalizedValue) {
+    if (character >= '0' && character <= '9') {
+      sanitizedValue += character;
+      continue;
+    }
+
+    if (character === '.' && !hasDecimalPoint) {
+      sanitizedValue += sanitizedValue.length === 0 ? '0.' : '.';
+      hasDecimalPoint = true;
+    }
+  }
+
+  return sanitizedValue;
+};
+
+/**
  * Parses a token amount input and returns only positive values.
  */
 export const parsePositiveAssetAmountInput = ({

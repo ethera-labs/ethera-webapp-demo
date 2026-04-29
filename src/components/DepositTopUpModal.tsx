@@ -1,3 +1,4 @@
+import { sanitizeDecimalAmountInput } from '../lib/assets';
 import type { DepositModalState } from '../types/deposit';
 
 type DepositTopUpModalProps = {
@@ -92,7 +93,7 @@ export function DepositTopUpModal({
           <input
             className="amount-input"
             value={modal.topUpAmountInput}
-            onChange={(event) => onTopUpAmountChange(event.target.value)}
+            onChange={(event) => onTopUpAmountChange(sanitizeDecimalAmountInput(event.target.value))}
             inputMode="decimal"
             min="0"
             step="any"
