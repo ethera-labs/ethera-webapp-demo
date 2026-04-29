@@ -252,6 +252,7 @@ export function useFundingScreenState({
 
     setFundingTokenValue(getAssetValue(importedToken));
     void l1TokenBalancesQuery.refetch();
+    return importedToken;
   }, [importCanonicalL1Token, l1TokenBalancesQuery]);
 
   const {

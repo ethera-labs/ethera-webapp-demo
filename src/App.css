@@ -457,8 +457,21 @@ h1 {
   margin-top: 0.8rem;
 }
 
+.token-import-toggle {
+  border-style: dashed;
+  color: var(--ink);
+}
+
+.token-import-toggle-open {
+  background: rgba(13, 28, 51, 0.06);
+}
+
 .funding-import-panel {
   margin-top: 0.75rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--compose-line);
+  border-radius: 0.95rem;
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.96), rgba(243, 246, 250, 0.96));
 }
 
 .funding-import-row {
@@ -466,6 +479,10 @@ h1 {
   grid-template-columns: 1fr auto;
   align-items: end;
   gap: 0.7rem;
+}
+
+.funding-import-panel .hint {
+  margin-top: 0.55rem;
 }
 
 .hint {
@@ -823,6 +840,7 @@ h1 {
 .receipt-status-tag {
   display: inline-flex;
   align-items: center;
+  gap: 0.42rem;
   border-radius: 999px;
   padding: 0.24rem 0.68rem;
   font-size: 0.78rem;
@@ -846,6 +864,26 @@ h1 {
   color: #8b2a20;
   background: rgba(217, 83, 79, 0.14);
   border: 1px solid rgba(217, 83, 79, 0.42);
+}
+
+.receipt-status-spinner {
+  width: 0.72rem;
+  height: 0.72rem;
+  border-radius: 999px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  opacity: 0.8;
+  animation: receipt-status-spin 0.9s linear infinite;
+}
+
+@keyframes receipt-status-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .tx-progress-note {

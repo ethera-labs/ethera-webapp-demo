@@ -2,11 +2,28 @@ import { useQuery } from '@tanstack/react-query';
 import { useSmartAccount } from '@ssv-labs/ethera-sdk/react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { erc20Abi } from 'viem';
-import { chainA, chainB, composeConfig, demoTokens, networkProfile, universalContracts, type DemoToken } from '../composeConfig';
+import {
+  chainA,
+  chainB,
+  composeConfig,
+  demoTokens,
+  l1FundingConfig,
+  networkProfile,
+  universalContracts,
+  type DemoToken
+} from '../composeConfig';
 import { dedupeErc20TokensByAddress, getAssetValue } from '../lib/assets';
 import { formatChainLabel, formatTokenAmount } from '../lib/format';
-import { readImportedTokens, resolveImportedTokenMetadata, upsertImportedToken } from '../lib/importedTokens';
+import { resolveCetFactoryAddressFromL2Bridge, resolvePredictedCetAddress } from '../lib/l1Bridge';
+import {
+  getImportedTokensStorageKey,
+  readImportedTokens,
+  resolveImportedTokenMetadata,
+  subscribeToImportedTokens,
+  upsertImportedToken
+} from '../lib/importedTokens';
 import { resolveDestinationPayoutTokenAddress, resolveSourceTokenBridgeMode } from './bridgeExecution';
+import { useCanonicalL1TokenImport } from './useCanonicalL1TokenImport';
 import { useBridgeExecution } from './useBridgeExecution';
 import type { PickerOption } from '../components/Picker';
 import type { DepositRequirement } from '../types/deposit';
@@ -28,6 +45,11 @@ const AVAILABLE_CHAINS = [chainA, chainB] as const;
 const CHAIN_IDS = [chainA.id, chainB.id] as [number, number];
 const getOppositeChainId = (chainId: number) => (chainId === chainA.id ? chainB.id : chainA.id);
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as const;
+
+type AutoResolvedBridgeToken = DemoToken & {
+  kind: 'erc20';
+  bridgeMode: 'cet';
+};
 
 /**
  * Prepares all bridge screen view-model state while delegating execution to useBridgeExecution.
@@ -65,6 +87,11 @@ export function useBridgeScreenState({
   const entryPointAddress = composeConfig.entryPoint.address as `0x${string}`;
   const universalBridgeAddress = universalContracts?.l2ToL2Bridge;
 
+  const { importedTokens: importedCanonicalL1Tokens } = useCanonicalL1TokenImport({
+    walletAddress,
+    l1FundingConfig
+  });
+
   const smartAccountAQuery = useSmartAccount({ chainId: chainA.id, multiChainIds: CHAIN_IDS });
   const smartAccountBQuery = useSmartAccount({ chainId: chainB.id, multiChainIds: CHAIN_IDS });
   const refetchSmartAccountA = smartAccountAQuery.refetch;
@@ -82,6 +109,8 @@ export function useBridgeScreenState({
   const destinationSmart = smartByChainId[destinationChainId];
   const sourceChain = sourceChainId === chainA.id ? chainA : chainB;
   const destinationChain = destinationChainId === chainA.id ? chainA : chainB;
+  const sourceComposeL2BridgeAddress = networkProfile.universal?.l2BridgeByChainId?.[sourceChain.id];
+  const canonicalL1ChainId = l1FundingConfig?.chain.id;
 
   const sharedSmartAccountAddress = smartAccountAQuery.data?.account.address;
 
@@ -91,22 +120,102 @@ export function useBridgeScreenState({
       return;
     }
 
-    const storedTokens = readImportedTokens({
+    const storageKey = getImportedTokensStorageKey({
       networkMode: networkProfile.mode,
       chainId: sourceChain.id,
       walletAddress
-    }).map((token) => ({
-      ...token,
-      kind: 'erc20' as const
-    }));
+    });
 
-    setImportedTokens(storedTokens);
+    const syncImportedTokens = () => {
+      const storedTokens = readImportedTokens({
+        networkMode: networkProfile.mode,
+        chainId: sourceChain.id,
+        walletAddress
+      }).map((token) => ({
+        ...token,
+        kind: 'erc20' as const
+      }));
+
+      setImportedTokens(storedTokens);
+    };
+
+    syncImportedTokens();
+
+    return subscribeToImportedTokens({
+      onUpdate: ({ storageKey: updatedStorageKey }) => {
+        if (updatedStorageKey !== storageKey) return;
+        syncImportedTokens();
+      }
+    });
   }, [sourceChain.id, walletAddress]);
 
+  const autoResolvedBridgeTokensQuery = useQuery({
+    queryKey: [
+      'bridge-auto-resolved-tokens',
+      sourceChain.id,
+      walletAddress,
+      canonicalL1ChainId,
+      sourceComposeL2BridgeAddress,
+      importedCanonicalL1Tokens.map((token) => token.address.toLowerCase()).join(',')
+    ],
+    enabled: Boolean(
+      walletAddress && canonicalL1ChainId && sourceComposeL2BridgeAddress && importedCanonicalL1Tokens.length > 0
+    ),
+    queryFn: async (): Promise<AutoResolvedBridgeToken[]> => {
+      if (!canonicalL1ChainId || !sourceComposeL2BridgeAddress) {
+        throw new Error('Source rollup token discovery context is not ready yet.');
+      }
+
+      const sourcePublicClient = composeConfig.getPublicClient(sourceChain.id);
+      if (!sourcePublicClient) {
+        throw new Error(`Source rollup public client is not configured for chain ${sourceChain.id}.`);
+      }
+
+      const cetFactoryAddress = await resolveCetFactoryAddressFromL2Bridge({
+        l2PublicClient: sourcePublicClient,
+        l2BridgeAddress: sourceComposeL2BridgeAddress
+      });
+
+      const resolvedTokens = await Promise.all(
+        importedCanonicalL1Tokens.map(async (canonicalToken) => {
+          try {
+            const predictedTokenAddress = await resolvePredictedCetAddress({
+              l2PublicClient: sourcePublicClient,
+              cetFactoryAddress,
+              remoteAsset: canonicalToken.address,
+              remoteChainId: canonicalL1ChainId
+            });
+
+            const tokenCode = await sourcePublicClient.getCode({ address: predictedTokenAddress });
+            if (!tokenCode || tokenCode === '0x') {
+              return undefined;
+            }
+
+            return {
+              symbol: canonicalToken.symbol,
+              address: predictedTokenAddress,
+              decimals: canonicalToken.decimals,
+              kind: 'erc20',
+              bridgeMode: 'cet'
+            } satisfies AutoResolvedBridgeToken;
+          } catch {
+            return undefined;
+          }
+        })
+      );
+
+      return resolvedTokens.filter((token): token is AutoResolvedBridgeToken => Boolean(token));
+    }
+  });
+
   const bridgeTokens = useMemo(() => {
-    const dedupedErc20Tokens = dedupeErc20TokensByAddress([...curatedErc20BridgeTokens, ...importedTokens]);
+    const dedupedErc20Tokens = dedupeErc20TokensByAddress([
+      ...curatedErc20BridgeTokens,
+      ...(autoResolvedBridgeTokensQuery.data ?? []),
+      ...importedTokens
+    ]);
     return [nativeBridgeToken, ...dedupedErc20Tokens];
-  }, [curatedErc20BridgeTokens, importedTokens, nativeBridgeToken]);
+  }, [autoResolvedBridgeTokensQuery.data, curatedErc20BridgeTokens, importedTokens, nativeBridgeToken]);
 
   useEffect(() => {
     if (bridgeTokens.length === 0) return;
@@ -147,21 +256,26 @@ export function useBridgeScreenState({
 
       const entries = await Promise.all(
         bridgeErc20Tokens.map(async (token) => {
-          const [smartBalance, eoaBalance] = await Promise.all([
-            smart.publicClient.readContract({
-              address: token.address,
-              abi: erc20Abi,
-              functionName: 'balanceOf',
-              args: [smartAddress]
-            }),
-            smart.publicClient.readContract({
-              address: token.address,
-              abi: erc20Abi,
-              functionName: 'balanceOf',
-              args: [eoaAddress]
-            })
-          ]);
-          return [token.address.toLowerCase(), smartBalance + eoaBalance] as const;
+          try {
+            const [smartBalance, eoaBalance] = await Promise.all([
+              smart.publicClient.readContract({
+                address: token.address,
+                abi: erc20Abi,
+                functionName: 'balanceOf',
+                args: [smartAddress]
+              }),
+              smart.publicClient.readContract({
+                address: token.address,
+                abi: erc20Abi,
+                functionName: 'balanceOf',
+                args: [eoaAddress]
+              })
+            ]);
+
+            return [token.address.toLowerCase(), smartBalance + eoaBalance] as const;
+          } catch {
+            return [token.address.toLowerCase(), 0n] as const;
+          }
         })
       );
       return Object.fromEntries(entries) as TokenBalances;
@@ -264,6 +378,16 @@ export function useBridgeScreenState({
 
   const sourceTokenBalances = sourceTokenBalancesQuery.data;
   const sourceNativeBalances = sourceNativeBalancesQuery.data;
+  const refetchSourceTokenBalances = sourceTokenBalancesQuery.refetch;
+  const refetchDestinationBalance = destinationBalanceQuery.refetch;
+
+  useEffect(() => {
+    if (!autoResolvedBridgeTokensQuery.data) return;
+
+    void refetchSourceTokenBalances();
+    void refetchDestinationBalance();
+  }, [autoResolvedBridgeTokensQuery.data, refetchDestinationBalance, refetchSourceTokenBalances]);
+
   const sourceBalance = selectedToken
     ? selectedToken.kind === 'nativeEthViaWeth'
       ? sourceNativeBalances?.total

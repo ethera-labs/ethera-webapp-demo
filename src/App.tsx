@@ -478,7 +478,7 @@ function App() {
                       ?
                     </span>
                     <span className="modal-help-tooltip" role="tooltip">
-                      Don&apos;t see your token? Click <strong>Import token</strong> below and paste the token
+                      Don&apos;t see your token? Click <strong>Add custom token</strong> below and paste the token
                       address on the current source rollup.
                     </span>
                   </span>
@@ -515,16 +515,21 @@ function App() {
 
             <TokenImportPanel
               isOpen={isBridgeImportOpen}
-              toggleLabel={isBridgeImportOpen ? 'Hide import token' : 'Import token'}
+              toggleLabel={isBridgeImportOpen ? 'Hide custom token' : 'Add custom token'}
               addressInput={bridgeImportTokenAddressInput}
               isImporting={isImportingBridgeToken}
+              inputLabel="Rollup token address"
+              importButtonLabel="Add token"
               helperText="Enter the token address on the current source rollup."
               onToggle={() => {
                 setIsBridgeImportOpen((current) => !current);
               }}
               onAddressChange={setBridgeImportTokenAddressInput}
-              onImport={() => {
-                void importBridgeToken();
+              onImport={async () => {
+                const importedToken = await importBridgeToken();
+                if (!importedToken) return;
+                setIsBridgeImportOpen(false);
+                setSuccessNotice(`${importedToken.symbol} is now available in the token list.`);
               }}
             />
 
@@ -604,7 +609,7 @@ function App() {
                       ?
                     </span>
                     <span className="modal-help-tooltip" role="tooltip">
-                      Don&apos;t see your token? Click <strong>Import token</strong> below and paste the canonical
+                      Don&apos;t see your token? Click <strong>Add custom token</strong> below and paste the canonical
                       L1 ERC-20 address.
                     </span>
                   </span>
@@ -643,16 +648,21 @@ function App() {
 
             <TokenImportPanel
               isOpen={isFundingImportOpen}
-              toggleLabel={isFundingImportOpen ? 'Hide import token' : 'Import token'}
+              toggleLabel={isFundingImportOpen ? 'Hide custom token' : 'Add custom token'}
               addressInput={importTokenAddressInput}
               isImporting={isImportingToken}
-              helperText="Enter ERC-20 token address."
+              inputLabel="Canonical L1 token address"
+              importButtonLabel="Add token"
+              helperText="Enter the canonical L1 ERC-20 token address."
               onToggle={() => {
                 setIsFundingImportOpen((current) => !current);
               }}
               onAddressChange={setImportTokenAddressInput}
-              onImport={() => {
-                void importFundingToken();
+              onImport={async () => {
+                const importedToken = await importFundingToken();
+                if (!importedToken) return;
+                setIsFundingImportOpen(false);
+                setSuccessNotice(`${importedToken.symbol} is now available in the token list.`);
               }}
             />
 
@@ -743,7 +753,7 @@ function App() {
                       ?
                     </span>
                     <span className="modal-help-tooltip" role="tooltip">
-                      Don&apos;t see your token? Click <strong>Import token</strong> below and paste the canonical
+                      Don&apos;t see your token? Click <strong>Add custom token</strong> below and paste the canonical
                       L1 ERC-20 address.
                     </span>
                   </span>
@@ -782,17 +792,22 @@ function App() {
 
             <TokenImportPanel
               isOpen={isReturnImportOpen}
-              toggleLabel={isReturnImportOpen ? 'Hide import token' : 'Import token'}
+              toggleLabel={isReturnImportOpen ? 'Hide custom token' : 'Add custom token'}
               addressInput={returnImportTokenAddressInput}
               isImporting={isImportingReturnToken}
-              helperText="Enter canonical L1 ERC-20 token address."
+              inputLabel="Canonical L1 token address"
+              importButtonLabel="Add token"
+              helperText="Enter the canonical L1 ERC-20 token address."
               secondaryHelperText="The app derives the withdrawable L2 counterpart automatically when available."
               onToggle={() => {
                 setIsReturnImportOpen((current) => !current);
               }}
               onAddressChange={setReturnImportTokenAddressInput}
-              onImport={() => {
-                void importReturnToken();
+              onImport={async () => {
+                const importedToken = await importReturnToken();
+                if (!importedToken) return;
+                setIsReturnImportOpen(false);
+                setSuccessNotice(`${importedToken.symbol} is now available in the token list.`);
               }}
             />
 
