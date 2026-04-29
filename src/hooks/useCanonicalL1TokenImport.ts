@@ -1,12 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { composeConfig, networkProfile, type DemoToken, type L1FundingConfig } from '../composeConfig';
-import {
-  getImportedTokensStorageKey,
-  readImportedTokens,
-  resolveImportedTokenMetadata,
-  subscribeToImportedTokens,
-  upsertImportedToken
-} from '../lib/importedTokens';
+import { resolveImportedTokenMetadata, upsertImportedToken } from '../lib/importedTokens';
+import { useImportedTokensStorage } from './useImportedTokensStorage';
 
 type UseCanonicalL1TokenImportParams = {
   walletAddress: `0x${string}` | undefined;
@@ -25,42 +20,18 @@ export function useCanonicalL1TokenImport({
   const [importTokenAddressInput, setImportTokenAddressInput] = useState('');
   const [importTokenError, setImportTokenError] = useState<string | null>(null);
   const [isImportingToken, setIsImportingToken] = useState(false);
-  const [importedTokens, setImportedTokens] = useState<DemoToken[]>([]);
-
-  useEffect(() => {
-    if (!walletAddress || !l1FundingConfig) {
-      setImportedTokens([]);
-      return;
-    }
-
-    const storageKey = getImportedTokensStorageKey({
-      networkMode: networkProfile.mode,
-      chainId: l1FundingConfig.chain.id,
-      walletAddress
-    });
-
-    const syncImportedTokens = () => {
-      const storedTokens = readImportedTokens({
-        networkMode: networkProfile.mode,
-        chainId: l1FundingConfig.chain.id,
-        walletAddress
-      }).map((token) => ({
+  const storedImportedTokens = useImportedTokensStorage({
+    chainId: l1FundingConfig?.chain.id,
+    walletAddress
+  });
+  const importedTokens = useMemo<DemoToken[]>(
+    () =>
+      storedImportedTokens.map((token) => ({
         ...token,
         kind: 'erc20' as const
-      }));
-
-      setImportedTokens(storedTokens);
-    };
-
-    syncImportedTokens();
-
-    return subscribeToImportedTokens({
-      onUpdate: ({ storageKey: updatedStorageKey }) => {
-        if (updatedStorageKey !== storageKey) return;
-        syncImportedTokens();
-      }
-    });
-  }, [l1FundingConfig, walletAddress]);
+      })),
+    [storedImportedTokens]
+  );
 
   const importCanonicalL1Token = useCallback(async () => {
     if (!walletAddress || !l1FundingConfig) {
@@ -95,22 +66,18 @@ export function useCanonicalL1TokenImport({
         tokenAddress: candidateAddress
       });
 
-      const nextImportedTokens = upsertImportedToken({
+      upsertImportedToken({
         networkMode: networkProfile.mode,
         chainId: l1FundingConfig.chain.id,
         walletAddress,
         token
-      }).map((item) => ({
-        ...item,
-        kind: 'erc20' as const
-      }));
+      });
 
       const importedToken: DemoToken = {
         ...token,
         kind: 'erc20'
       };
 
-      setImportedTokens(nextImportedTokens);
       setImportTokenAddressInput('');
 
       return importedToken;

@@ -15,16 +15,11 @@ import {
 import { dedupeErc20TokensByAddress, getAssetValue } from '../lib/assets';
 import { formatChainLabel, formatTokenAmount } from '../lib/format';
 import { resolveCetFactoryAddressFromL2Bridge, resolvePredictedCetAddress } from '../lib/l1Bridge';
-import {
-  getImportedTokensStorageKey,
-  readImportedTokens,
-  resolveImportedTokenMetadata,
-  subscribeToImportedTokens,
-  upsertImportedToken
-} from '../lib/importedTokens';
+import { resolveImportedTokenMetadata, upsertImportedToken } from '../lib/importedTokens';
 import { resolveDestinationPayoutTokenAddress, resolveSourceTokenBridgeMode } from './bridgeExecution';
 import { useCanonicalL1TokenImport } from './useCanonicalL1TokenImport';
 import { useBridgeExecution } from './useBridgeExecution';
+import { useImportedTokensStorage } from './useImportedTokensStorage';
 import type { PickerOption } from '../components/Picker';
 import type { DepositRequirement } from '../types/deposit';
 import type { TokenBalances } from '../types/bridge';
@@ -104,7 +99,6 @@ export function useBridgeScreenState({
   const [importTokenAddressInput, setImportTokenAddressInput] = useState('');
   const [importTokenError, setImportTokenError] = useState<string | null>(null);
   const [isImportingToken, setIsImportingToken] = useState(false);
-  const [importedTokens, setImportedTokens] = useState<DemoToken[]>([]);
 
   const entryPointAddress = composeConfig.entryPoint.address as `0x${string}`;
   const universalBridgeAddress = universalContracts?.l2ToL2Bridge;
@@ -133,43 +127,20 @@ export function useBridgeScreenState({
   const destinationChain = destinationChainId === chainA.id ? chainA : chainB;
   const sourceComposeL2BridgeAddress = networkProfile.universal?.l2BridgeByChainId?.[sourceChain.id];
   const canonicalL1ChainId = l1FundingConfig?.chain.id;
-
-  const sharedSmartAccountAddress = smartAccountAQuery.data?.account.address;
-
-  useEffect(() => {
-    if (!walletAddress) {
-      setImportedTokens([]);
-      return;
-    }
-
-    const storageKey = getImportedTokensStorageKey({
-      networkMode: networkProfile.mode,
-      chainId: sourceChain.id,
-      walletAddress
-    });
-
-    const syncImportedTokens = () => {
-      const storedTokens = readImportedTokens({
-        networkMode: networkProfile.mode,
-        chainId: sourceChain.id,
-        walletAddress
-      }).map((token) => ({
+  const importedRollupTokens = useImportedTokensStorage({
+    chainId: sourceChain.id,
+    walletAddress
+  });
+  const importedTokens = useMemo<DemoToken[]>(
+    () =>
+      importedRollupTokens.map((token) => ({
         ...token,
         kind: 'erc20' as const
-      }));
+      })),
+    [importedRollupTokens]
+  );
 
-      setImportedTokens(storedTokens);
-    };
-
-    syncImportedTokens();
-
-    return subscribeToImportedTokens({
-      onUpdate: ({ storageKey: updatedStorageKey }) => {
-        if (updatedStorageKey !== storageKey) return;
-        syncImportedTokens();
-      }
-    });
-  }, [sourceChain.id, walletAddress]);
+  const sharedSmartAccountAddress = smartAccountAQuery.data?.account.address;
 
   const autoResolvedBridgeTokensQuery = useQuery({
     queryKey: [
@@ -446,22 +417,18 @@ export function useBridgeScreenState({
         tokenAddress: candidateAddress
       });
 
-      const nextImportedTokens = upsertImportedToken({
+      upsertImportedToken({
         networkMode: networkProfile.mode,
         chainId: sourceChain.id,
         walletAddress,
         token
-      }).map((item) => ({
-        ...item,
-        kind: 'erc20' as const
-      }));
+      });
 
       const importedToken: DemoToken = {
         ...token,
         kind: 'erc20'
       };
 
-      setImportedTokens(nextImportedTokens);
       setImportTokenAddressInput('');
       setSelectedTokenValue(getAssetValue(importedToken));
       void sourceTokenBalancesQuery.refetch();
