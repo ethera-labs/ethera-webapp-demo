@@ -1,5 +1,6 @@
+import { createUniversalBridgeTransferOperations } from '@ssv-labs/ethera-sdk';
 import { useCallback, useState } from 'react';
-import { formatEther, type Chain } from 'viem';
+import { erc20Abi, encodeFunctionData, formatEther, type Chain } from 'viem';
 import type { DemoToken } from '../composeConfig';
 import { formatChainLabel } from '../lib/format';
 import type { BridgeResult } from '../types/bridge';
@@ -7,12 +8,9 @@ import type { DepositRequirement } from '../types/deposit';
 import {
   MAX_TRANSACTION_HISTORY,
   MIN_RECOMMENDED_TOP_UP,
-  buildBridgeCalls,
   executeComposedBridgeFlow,
   loadSourceFundingContext,
   markNonSuccessfulStatusesFailed,
-  resolveDestinationPayoutTokenAddress,
-  resolveSourceTokenBridgeMode,
   resolveBridgeExecutionError,
   resolveEntryPointDepositRequirements,
   type BridgeCall,
@@ -204,37 +202,35 @@ export function useBridgeExecution({
       }
 
       const sessionId = BigInt(Date.now());
-      // Only ERC20 mode needs transferFrom pull from EOA; ETH mode pre-funds native in execution step.
-      const amountToPullFromEoa = fundingContext.kind === 'erc20' ? fundingContext.amountToPullFromEoa : 0n;
-      const sourceTokenBridgeMode = await resolveSourceTokenBridgeMode({
-        sourceSmart: sourceSmartAccount,
-        selectedToken: validatedToken
-      });
-      const destinationPayoutTokenAddress = await resolveDestinationPayoutTokenAddress({
-        sourceSmart: sourceSmartAccount,
-        destinationSmart: destinationSmartAccount,
-        selectedToken: validatedToken,
-        sourceTokenBridgeMode,
-        sourceChainId: sourceChain.id,
-        destinationChainId: destinationChain.id,
-        universalBridgeAddress
+
+      const operations = await createUniversalBridgeTransferOperations({
+        sourceSmartAccount: { account: sourceSmartAccount.account, publicClient: sourceSmartAccount.publicClient },
+        destinationSmartAccount: { account: destinationSmartAccount.account, publicClient: destinationSmartAccount.publicClient },
+        sourceBridge: universalBridgeAddress,
+        destinationBridge: universalBridgeAddress,
+        sessionId,
+        asset:
+          validatedToken.kind === 'nativeEthViaWeth'
+            ? { kind: 'native', amount }
+            : { kind: 'auto', token: validatedToken.address, amount, allowancePolicy: { strategy: 'exact' } },
+        recipient: destinationEoaReceiver
       });
 
-      const { sourceCalls, destinationCalls } = buildBridgeCalls({
-        selectedToken: validatedToken,
-        walletAddress: validatedWalletAddress,
-        sender,
-        receiver,
-        destinationEoaReceiver,
-        destinationPayoutTokenAddress,
-        universalBridgeAddress,
-        sourceChainId: sourceChain.id,
-        destinationChainId: destinationChain.id,
-        amount,
-        sessionId,
-        amountToPullFromEoa,
-        sourceTokenBridgeMode
-      });
+      // ERC20 mode: if SA lacks tokens, inject transferFrom so SA pulls from EOA within the user op.
+      if (fundingContext.kind === 'erc20' && fundingContext.amountToPullFromEoa > 0n) {
+        operations[0].calls.unshift({
+          to: validatedToken.address,
+          value: 0n,
+          data: encodeFunctionData({
+            abi: erc20Abi,
+            functionName: 'transferFrom',
+            args: [validatedWalletAddress, sender, fundingContext.amountToPullFromEoa]
+          })
+        });
+      }
+
+      const sourceCalls: BridgeCall[] = operations[0].calls.map((c) => ({ to: c.to, value: c.value ?? 0n, data: c.data }));
+      const destinationCalls: BridgeCall[] = operations[1].calls.map((c) => ({ to: c.to, value: c.value ?? 0n, data: c.data }));
 
       const shouldCheckEntryPointDeposit = !options?.skipDepositCheck && !hasPaymaster;
       if (shouldCheckEntryPointDeposit) {
