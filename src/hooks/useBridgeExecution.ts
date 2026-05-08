@@ -216,21 +216,30 @@ export function useBridgeExecution({
         recipient: destinationEoaReceiver
       });
 
-      // ERC20 mode: if SA lacks tokens, inject transferFrom so SA pulls from EOA within the user op.
-      if (fundingContext.kind === 'erc20' && fundingContext.amountToPullFromEoa > 0n) {
-        operations[0].calls.unshift({
-          to: validatedToken.address,
-          value: 0n,
-          data: encodeFunctionData({
-            abi: erc20Abi,
-            functionName: 'transferFrom',
-            args: [validatedWalletAddress, sender, fundingContext.amountToPullFromEoa]
-          })
-        });
+      const [sourceOp, destinationOp] = operations;
+      if (!sourceOp || !destinationOp) {
+        throw new Error(`createUniversalBridgeTransferOperations returned ${operations.length} operation(s), expected 2`);
       }
 
-      const sourceCalls: BridgeCall[] = operations[0].calls.map((c) => ({ to: c.to, value: c.value ?? 0n, data: c.data }));
-      const destinationCalls: BridgeCall[] = operations[1].calls.map((c) => ({ to: c.to, value: c.value ?? 0n, data: c.data }));
+      // ERC20 mode: if SA lacks tokens, inject transferFrom so SA pulls from EOA within the user op.
+      const rawSourceCalls =
+        fundingContext.kind === 'erc20' && fundingContext.amountToPullFromEoa > 0n
+          ? [
+              {
+                to: validatedToken.address,
+                value: 0n,
+                data: encodeFunctionData({
+                  abi: erc20Abi,
+                  functionName: 'transferFrom',
+                  args: [validatedWalletAddress, sender, fundingContext.amountToPullFromEoa]
+                })
+              },
+              ...sourceOp.calls
+            ]
+          : sourceOp.calls;
+
+      const sourceCalls: BridgeCall[] = rawSourceCalls.map((c) => ({ to: c.to, value: c.value ?? 0n, data: c.data }));
+      const destinationCalls: BridgeCall[] = destinationOp.calls.map((c) => ({ to: c.to, value: c.value ?? 0n, data: c.data }));
 
       const shouldCheckEntryPointDeposit = !options?.skipDepositCheck && !hasPaymaster;
       if (shouldCheckEntryPointDeposit) {

@@ -117,7 +117,7 @@ export function useBridgeScreenState({
       [chainA.id]: smartAccountsQuery.accounts[chainA.id]?.data,
       [chainB.id]: smartAccountsQuery.accounts[chainB.id]?.data
     }),
-    [smartAccountsQuery.accounts]
+    [smartAccountsQuery.accounts[chainA.id]?.data, smartAccountsQuery.accounts[chainB.id]?.data]
   );
 
   const sourceSmart = smartByChainId[sourceChainId];

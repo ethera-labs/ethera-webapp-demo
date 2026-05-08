@@ -1,7 +1,5 @@
 import { composeUnpreparedUserOps } from '@ssv-labs/ethera-sdk';
 import { erc20Abi, parseEventLogs, type Log, type TransactionReceipt } from 'viem';
-
-const MESSAGE_NOT_FOUND_SELECTOR = '0x28915ac7';
 import {
   COMPOSE_BUILD_TIMEOUT_MS,
   COMPOSE_SEND_TIMEOUT_MS,
@@ -12,6 +10,8 @@ import {
   USER_OP_BUILD_TIMEOUT_MS
 } from './constants';
 import type { ExecuteComposedBridgeFlowParams, ExecuteComposedBridgeFlowResult, WalletClientLike } from './types';
+
+const MESSAGE_NOT_FOUND_SELECTOR = '0x28915ac7';
 
 // Compose SDK execution path with timeout handling and broadcast verification fallback.
 const withTimeout = <T,>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> =>
