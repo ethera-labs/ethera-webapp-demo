@@ -123,7 +123,7 @@ export const cetFactoryPredictAddressAbi = [
   }
 ] as const;
 
-type StandardBridgeReadClient = Pick<PublicClient, 'readContract'>;
+type StandardBridgeReadClient = { readContract: PublicClient['readContract'] };
 
 /**
  * Resolves the L2 bridge counterpart from an L1 bridge using canonical getter names.

@@ -121,7 +121,7 @@ export const resolveImportedTokenMetadata = async ({
   publicClient,
   tokenAddress
 }: {
-  publicClient: Pick<PublicClient, 'readContract'>;
+  publicClient: { readContract: PublicClient['readContract'] };
   tokenAddress: string;
 }): Promise<ImportedToken> => {
   if (!isAddress(tokenAddress)) {
