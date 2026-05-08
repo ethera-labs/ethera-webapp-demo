@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useSmartAccount } from '@ssv-labs/ethera-sdk/react';
+import { useSmartAccounts } from '@ssv-labs/ethera-sdk/react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { erc20Abi } from 'viem';
 import {
@@ -108,17 +108,16 @@ export function useBridgeScreenState({
     l1FundingConfig
   });
 
-  const smartAccountAQuery = useSmartAccount({ chainId: chainA.id, multiChainIds: CHAIN_IDS });
-  const smartAccountBQuery = useSmartAccount({ chainId: chainB.id, multiChainIds: CHAIN_IDS });
-  const refetchSmartAccountA = smartAccountAQuery.refetch;
-  const refetchSmartAccountB = smartAccountBQuery.refetch;
+  const smartAccountsQuery = useSmartAccounts({ chainIds: CHAIN_IDS, multiChainIds: CHAIN_IDS });
+  const refetchSmartAccountA = smartAccountsQuery.accounts[chainA.id]?.refetch;
+  const refetchSmartAccountB = smartAccountsQuery.accounts[chainB.id]?.refetch;
 
   const smartByChainId = useMemo(
     () => ({
-      [chainA.id]: smartAccountAQuery.data,
-      [chainB.id]: smartAccountBQuery.data
+      [chainA.id]: smartAccountsQuery.accounts[chainA.id]?.data,
+      [chainB.id]: smartAccountsQuery.accounts[chainB.id]?.data
     }),
-    [smartAccountAQuery.data, smartAccountBQuery.data]
+    [smartAccountsQuery.accounts]
   );
 
   const sourceSmart = smartByChainId[sourceChainId];
@@ -140,7 +139,7 @@ export function useBridgeScreenState({
     [importedRollupTokens]
   );
 
-  const sharedSmartAccountAddress = smartAccountAQuery.data?.account.address;
+  const sharedSmartAccountAddress = smartAccountsQuery.accounts[chainA.id]?.data?.account.address;
 
   const autoResolvedBridgeTokensQuery = useQuery({
     queryKey: [
@@ -504,11 +503,11 @@ export function useBridgeScreenState({
     if (!isConnected || !walletAddress) return;
     if (!isWalletOnSupportedChain) return;
 
-    void refetchSmartAccountA();
-    void refetchSmartAccountB();
+    void refetchSmartAccountA?.();
+    void refetchSmartAccountB?.();
   }, [isConnected, isWalletOnSupportedChain, walletAddress, walletChainId, refetchSmartAccountA, refetchSmartAccountB]);
 
-  const accountsLoading = smartAccountAQuery.isLoading || smartAccountBQuery.isLoading;
+  const accountsLoading = smartAccountsQuery.isLoading;
   const sourceBalancesLoading = sourceTokenBalancesQuery.isLoading || sourceNativeBalancesQuery.isLoading;
   const hasAmountInput = amountInput.trim().length > 0;
   const canSubmitBridge =
