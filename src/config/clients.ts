@@ -42,9 +42,7 @@ export const createComposeRuntimeConfig = ({
   wagmiConfig: ReturnType<typeof createWagmiRuntimeConfig>;
 }) =>
   createEtheraConfig({
-    // L1 funding chain is wallet-only; SDK must only see L2 chains with AA contracts.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    wagmi: { ...wagmiConfig, chains: networkProfile.chains } as any,
+    wagmi: wagmiConfig,
     accountAbstractionContracts: networkProfile.accountAbstractionContracts,
     ...(networkProfile.paymasterByChainId
       ? {
