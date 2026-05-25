@@ -10,7 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@ssv-labs/ethera-sdk": "github:ethera-labs/compose-sdk#main",
+    "@ssv-labs/ethera-sdk": "^0.1.0",
     "@tanstack/react-query": "^5.95.2",
     "@wagmi/core": "^2.22.1",
     "react": "^18.3.1",
