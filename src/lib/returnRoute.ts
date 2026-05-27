@@ -1,4 +1,4 @@
-import type { PublicClient } from 'viem';
+import type { ContractReader } from '../types/viem';
 import type { L1FundingConfig, UniversalContractsConfig } from '../config/types';
 import { resolveDisputeGameFactoryAddressFromPortal } from './l1Bridge';
 import type { ReturnSettlementContracts } from '../types/funding';
@@ -20,7 +20,7 @@ export const resolveReturnRouteForSourceChain = async ({
   sourceChainId: number;
   l1FundingConfig: L1FundingConfig;
   universalContracts: UniversalContractsConfig | undefined;
-  l1PublicClient: Pick<PublicClient, 'readContract'>;
+  l1PublicClient: ContractReader;
 }): Promise<ReturnRouteResolution> => {
   const universalL2BridgeAddress = universalContracts?.l2BridgeByChainId?.[sourceChainId];
   const configuredPortalAddress =

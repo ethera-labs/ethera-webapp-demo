@@ -1,4 +1,4 @@
-import type { PublicClient } from 'viem';
+import type { ContractReader } from '../types/viem';
 
 const isHexAddress = (value: unknown): value is `0x${string}` =>
   typeof value === 'string' && /^0x[a-fA-F0-9]{40}$/.test(value);
@@ -123,7 +123,7 @@ export const cetFactoryPredictAddressAbi = [
   }
 ] as const;
 
-type StandardBridgeReadClient = Pick<PublicClient, 'readContract'>;
+type StandardBridgeReadClient = ContractReader;
 
 /**
  * Resolves the L2 bridge counterpart from an L1 bridge using canonical getter names.

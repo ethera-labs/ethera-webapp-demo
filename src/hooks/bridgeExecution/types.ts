@@ -57,22 +57,6 @@ export type SourceFundingContext =
 
 export type SourceTokenBridgeMode = 'erc20' | 'cet';
 
-export type BuildBridgeCallsParams = {
-  selectedToken: DemoToken;
-  walletAddress: `0x${string}`;
-  sender: `0x${string}`;
-  receiver: `0x${string}`;
-  destinationEoaReceiver: `0x${string}`;
-  destinationPayoutTokenAddress: `0x${string}`;
-  universalBridgeAddress: `0x${string}`;
-  sourceChainId: number;
-  destinationChainId: number;
-  amount: bigint;
-  sessionId: bigint;
-  amountToPullFromEoa: bigint;
-  sourceTokenBridgeMode: SourceTokenBridgeMode;
-};
-
 export type ResolveEntryPointDepositRequirementsParams = {
   sourceSmartAccount: SmartAccountData;
   destinationSmartAccount: SmartAccountData;

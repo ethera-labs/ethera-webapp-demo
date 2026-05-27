@@ -1,4 +1,5 @@
-import { erc20Abi, isAddress, type PublicClient } from 'viem';
+import { erc20Abi, isAddress } from 'viem';
+import type { ContractReader } from '../types/viem';
 
 export type ImportedToken = {
   address: `0x${string}`;
@@ -121,7 +122,7 @@ export const resolveImportedTokenMetadata = async ({
   publicClient,
   tokenAddress
 }: {
-  publicClient: Pick<PublicClient, 'readContract'>;
+  publicClient: ContractReader;
   tokenAddress: string;
 }): Promise<ImportedToken> => {
   if (!isAddress(tokenAddress)) {

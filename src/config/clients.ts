@@ -1,4 +1,4 @@
-import { createComposeConfig, type ComposeRpcSchema } from '@ssv-labs/ethera-sdk';
+import { createEtheraConfig, type EtheraRpcSchema } from '@ssv-labs/ethera-sdk';
 import { createConfig, http } from '@wagmi/core';
 import { createPublicClient, rpcSchema, type Chain } from 'viem';
 import { injected, metaMask } from 'wagmi/connectors';
@@ -26,7 +26,7 @@ export const createWagmiRuntimeConfig = (networkProfile: NetworkProfile, walletC
       return createPublicClient({
         chain: parameters.chain,
         transport: http(networkProfile.rpcByChainId[parameters.chain.id]),
-        rpcSchema: rpcSchema<ComposeRpcSchema>()
+        rpcSchema: rpcSchema<EtheraRpcSchema>()
       });
     }
   });
@@ -39,9 +39,9 @@ export const createComposeRuntimeConfig = ({
   wagmiConfig
 }: {
   networkProfile: NetworkProfile;
-  wagmiConfig: ReturnType<typeof createConfig>;
+  wagmiConfig: ReturnType<typeof createWagmiRuntimeConfig>;
 }) =>
-  createComposeConfig({
+  createEtheraConfig({
     wagmi: wagmiConfig,
     accountAbstractionContracts: networkProfile.accountAbstractionContracts,
     ...(networkProfile.paymasterByChainId

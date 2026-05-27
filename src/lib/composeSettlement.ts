@@ -1,5 +1,6 @@
 import { buildProveWithdrawal, type BuildProveWithdrawalReturnType, type GetWithdrawalsReturnType } from 'viem/op-stack';
-import { ContractFunctionRevertedError, decodeAbiParameters, type PublicClient } from 'viem';
+import { ContractFunctionRevertedError, decodeAbiParameters } from 'viem';
+import type { ContractReader } from '../types/viem';
 
 export type ComposeWithdrawalStatus =
   | 'waiting-to-prove'
@@ -282,7 +283,7 @@ const getLatestComposeGames = async ({
   portalAddress,
   disputeGameFactoryAddress
 }: {
-  l1PublicClient: Pick<PublicClient, 'readContract'>;
+  l1PublicClient: ContractReader;
   portalAddress: `0x${string}`;
   disputeGameFactoryAddress: `0x${string}`;
 }): Promise<readonly RawComposeGame[]> => {
@@ -319,7 +320,7 @@ export const findComposeGameForWithdrawal = async ({
   sourceChainId,
   withdrawalL2BlockNumber
 }: {
-  l1PublicClient: Pick<PublicClient, 'readContract'>;
+  l1PublicClient: ContractReader;
   portalAddress: `0x${string}`;
   disputeGameFactoryAddress: `0x${string}`;
   sourceChainId: number;
@@ -358,7 +359,7 @@ const assertSuperRootPortal = async ({
   l1PublicClient,
   portalAddress
 }: {
-  l1PublicClient: Pick<PublicClient, 'readContract'>;
+  l1PublicClient: ContractReader;
   portalAddress: `0x${string}`;
 }): Promise<void> => {
   const superRootsActive = await l1PublicClient.readContract({
@@ -377,7 +378,7 @@ const resolveComposeGameProxy = async ({
   disputeGameFactoryAddress,
   gameIndex
 }: {
-  l1PublicClient: Pick<PublicClient, 'readContract'>;
+  l1PublicClient: ContractReader;
   disputeGameFactoryAddress: `0x${string}`;
   gameIndex: bigint;
 }): Promise<`0x${string}`> => {
@@ -406,7 +407,7 @@ export const buildComposeProveWithdrawalArgs = async ({
   withdrawalL2BlockNumber
 }: {
   sourcePublicClient: unknown;
-  l1PublicClient: Pick<PublicClient, 'readContract'>;
+  l1PublicClient: ContractReader;
   portalAddress: `0x${string}`;
   disputeGameFactoryAddress: `0x${string}`;
   sourceChainId: number;
@@ -470,7 +471,7 @@ export const getLatestProofSubmitter = async ({
   portalAddress,
   withdrawalHash
 }: {
-  l1PublicClient: Pick<PublicClient, 'readContract'>;
+  l1PublicClient: ContractReader;
   portalAddress: `0x${string}`;
   withdrawalHash: `0x${string}`;
 }): Promise<`0x${string}` | null> => {
@@ -501,7 +502,7 @@ export const getComposeWithdrawalStatus = async ({
   withdrawal,
   withdrawalL2BlockNumber
 }: {
-  l1PublicClient: Pick<PublicClient, 'readContract'>;
+  l1PublicClient: ContractReader;
   portalAddress: `0x${string}`;
   disputeGameFactoryAddress: `0x${string}`;
   sourceChainId: number;
